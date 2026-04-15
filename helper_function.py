@@ -234,6 +234,17 @@ def get_analytical_matrices(dim_q1, dim_c, dim_q2, V0, V1):
                                 )
     return E_analytics, V0_analytics, V1_analytics
 
+def clean_expr(expr):
+    expr = sp.expand(expr)            # Produkte auflösen
+    expr = sp.simplify(expr)          # grob vereinfachen
+
+    # 🔥 entscheidend: explizit 0-Terme entfernen
+    if expr.is_Add:
+        expr = sp.Add(*[t for t in expr.args if t != 0])
+
+    return expr
+
+
 ### --- Dynamics prediction using Floquet perturbation theory --- ###
 
 def Psi_t_FloquetPerturb(rH, rW, wd, amp, resonances, E, V_posHarm, initial_state, t_list):
