@@ -234,6 +234,13 @@ def get_analytical_matrices(dim_q1, dim_c, dim_q2, V0, V1):
                                 )
     return E_analytics, V0_analytics, V1_analytics
 
+def find_transmon_parameters(hamiltonian, N):
+    coeff_linear = hamiltonian.coeff(N, 1)
+    coeff_squared = hamiltonian.coeff(N, 2)
+    alpha = -2 * coeff_squared
+    omega = coeff_linear + coeff_squared
+    return omega, alpha
+
 def clean_expr(expr):
     expr = sp.expand(expr)            # Produkte auflösen
     expr = sp.simplify(expr)          # grob vereinfachen
