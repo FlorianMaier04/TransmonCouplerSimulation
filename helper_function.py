@@ -6,6 +6,73 @@ from sympy.physics.quantum.boson import BosonOp
 from sympy.physics.quantum.operatorordering import normal_ordered_form
 from Floquet_perturbation_theory import *
 
+
+class ValuePair:
+    def __init__(self, symbol_expr, numeric_val=None):
+        self.symbol = sp.simplify(symbol_expr)
+        self.numeric = numeric_val
+    
+    def __repr__(self):
+        if self.numeric is not None:
+            return f"ValuePair(symbol={self.symbol}, numeric={self.numeric})"
+        return f"ValuePair(symbol={self.symbol})"
+    
+    def __add__(self, other):
+        if isinstance(other, ValuePair):
+            return ValuePair(self.symbol + other.symbol, self.numeric + other.numeric if self.numeric is not None and other.numeric is not None else None)
+        return ValuePair(self.symbol + other, self.numeric)
+    
+    def __radd__(self, other):
+        return self.__add__(other)
+    
+    def __sub__(self, other):
+        if isinstance(other, ValuePair):
+            return ValuePair(self.symbol - other.symbol, self.numeric - other.numeric if self.numeric is not None and other.numeric is not None else None)
+        return ValuePair(self.symbol - other, self.numeric)
+    
+    def __rsub__(self, other):
+        return ValuePair(other - self.symbol, -self.numeric if self.numeric is not None else None)
+    
+    def __mul__(self, other):
+        if isinstance(other, ValuePair):
+            return ValuePair(self.symbol * other.symbol, self.numeric * other.numeric if self.numeric is not None and other.numeric is not None else None)
+        return ValuePair(self.symbol * other, self.numeric * other if self.numeric is not None else None)
+    
+    def __rmul__(self, other):
+        return self.__mul__(other)
+    
+    def __truediv__(self, other):
+        if isinstance(other, ValuePair):
+            return ValuePair(self.symbol / other.symbol, self.numeric / other.numeric if self.numeric is not None and other.numeric is not None else None)
+        return ValuePair(self.symbol / other, self.numeric / other if self.numeric is not None else None)
+    
+    def __pow__(self, other):
+        return ValuePair(self.symbol ** other, self.numeric ** other if self.numeric is not None else None)
+    
+    def subs(self, *args, **kwargs):
+        """Sympy substitution."""
+        return ValuePair(self.symbol.subs(*args, **kwargs), self.numeric)
+    
+    def evalf(self, *args, **kwargs):
+        """Numerische Auswertung."""
+        return self.symbol.evalf(*args, **kwargs)
+    
+    @property
+    def value(self):
+        """Gibt numerischen Wert zurück falls vorhanden, sonst symbolischen Ausdruck."""
+        return self.numeric if self.numeric is not None else self.symbol
+    
+    @property
+    def sym(self):
+        """Gibt symbolischen Ausdruck zurück."""
+        return self.symbol
+    
+    @sym.setter
+    def sym(self, value):
+        """Setzt den symbolischen Ausdruck."""
+        self.symbol = sp.simplify(value)
+
+
 ### --- For Transmon-Coupler-Transmon system Substitution of phase and charge operators into creation and annihilation operators --- ###
 
 def SecondQuantizedForm(Hamiltonian):
@@ -250,6 +317,20 @@ def clean_expr(expr):
         expr = sp.Add(*[t for t in expr.args if t != 0])
 
     return expr
+
+def compute_d(EJ1, EJ2):
+    return (EJ1 - EJ2) / (EJ1 + EJ2)
+
+def compute_gamma(phi_0, EJ1, EJ2):
+    expr_gamma = np.sqrt(compute_d(EJ1,EJ2)**2*np.sin(phi_0)**2 + np.cos(phi_0)**2)
+    return expr_gamma
+
+def compute_numerical(expr, EJ1, EJ2, EC1, EC2, ECc):
+    EJsum = EJ1 + EJ2
+
+
+
+
 
 
 ### --- Dynamics prediction using Floquet perturbation theory --- ###
