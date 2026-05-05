@@ -1,0 +1,45 @@
+{
+  "filename": "test",
+  "timestamp": "2026-05-05T20:52:01.941771",
+  "configuration": {
+    "time_ns": 200,
+    "timestep_ns": 0.01,
+    "accuracy": 0.1,
+    "base_amplitude_GHz": 0.1,
+    "base_frequency_GHz": 0.0,
+    "element_indices": [
+      0,
+      1
+    ],
+    "extraction_mode": "omega_ij",
+    "parameter_preset": "parameters_fast",
+    "pulse_modulation": "gaussian 0.5"
+  },
+  "simulator_parameters_GHz": {
+    "w1": 3.8299999999999996,
+    "w2": 3.11,
+    "wc": 4.29
+  },
+  "sweep_results": {
+    "amplitude": {
+      "parameters": [
+        0.001,
+        0.2
+      ],
+      "values": [
+        -0.0003477032302724998,
+        -0.0018916115786048258
+      ]
+    },
+    "frequency": {
+      "parameters": [
+        0.7,
+        0.712
+      ],
+      "values": [
+        0.0013040295897161656,
+        -0.0016250045543789143
+      ]
+    }
+  }
+}
