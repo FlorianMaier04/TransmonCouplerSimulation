@@ -343,7 +343,6 @@ def run_simulation(simulator, config):
     
     return results
 
-
 # ============================================================================
 # COMMAND LISTENER (runs in separate thread)
 # ============================================================================
