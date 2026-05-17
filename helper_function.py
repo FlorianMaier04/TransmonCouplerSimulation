@@ -298,7 +298,7 @@ def Psi_t_FloquetPerturb(rH, rW, wd, amp, resonances, E, V_posHarm, initial_stat
             t, wd, resonances, E,
             )
         )
-    return psi_t
+    return psi_t, W_element
 
 ### --- Optimize maximal fidelity with iSWAP gate with respect to time --- ###
 

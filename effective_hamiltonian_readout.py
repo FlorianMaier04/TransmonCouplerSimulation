@@ -1,5 +1,6 @@
 import sys
 import numpy as np
+import sympy as sp
 from qutip import *
 import matplotlib.pyplot as plt
 from tqdm import tqdm
@@ -32,7 +33,7 @@ def configure_simulation():
         # Options: 'parameters_fast', 'parameters_slow', 'parameters_high_range', 'parameters_side', 'parameters_freq'
         
         # Element extraction type
-        'extract_func': 'diag_diff',
+        'extract_func': 'omega_ij',
         # Options: 'omega_ij' (off-diagonal), 'diag_diff' (diagonal difference)
 
         # Pulse modulation shape (pulse shape parameter sigma = tg*parameter)
@@ -60,9 +61,7 @@ class Setup:
                  w1=3.83, w2=3.11, wc=4.29,
                  alpha1=-0.205, alpha2=-0.216, alphac=-0.161,
                  g1c=0.115, g2c=0.110, g12=0.015):
-        """
-        Initialize simulator with physical parameters.
-        
+        """        
         Args:
             dim_q1, dim_q2, dim_c: Hilbert space dimensions
             w1, w2, wc: Frequencies (in GHz, will be converted to rad/ns)
@@ -91,6 +90,7 @@ class Setup:
         self.tstep = 0.01
         self.accuracy = 1
         self._pulse_modulation = None
+
     def _setup_operators(self):
         """Initialize creation/annihilation operators."""
         self.a_q1 = tensor(destroy(self.dim_q1), qeye(self.dim_c), qeye(self.dim_q2))
@@ -110,8 +110,8 @@ class Setup:
         H0 = Hq1 + Hq2 + Hc + V0
         V1 = self.a_qc.dag() @ self.a_qc
         # Diagonalize H0
-        evals, evecs = H0.eigenstates()
-        self.sorted_evals, self.sorted_evecs = SortedFRFSpectrum(evals, evecs, self.dim_q1, self.dim_c, self.dim_q2)
+        self.evals, evecs = H0.eigenstates()
+        self.sorted_evals, self.sorted_evecs = SortedFRFSpectrum(self.evals, evecs, self.dim_q1, self.dim_c, self.dim_q2)
         self.t_interaction_picture = Qobj(
             np.column_stack([
                 self.sorted_evecs[i, j, k].full()
@@ -175,12 +175,42 @@ class Setup:
                 []
             )
             final_state = result.states[-1]
-            
             for row_idx, j_state in enumerate(subsystem_indices):
                 U[row_idx, col_idx] = final_state.full()[j_state, 0]
-        
         return U
+    
+    def compute_Heff(self, wd, amp, U):
+        dim_q1 = 3
+        dim_q2 = 3
+        dim_c = 3
+        state_a = dim_q2 * dim_c  # state |100>
+        state_b = 1  # state |001>
+        state_c = dim_q2  # state |010>
+        subsystem_indices = [state_a, state_b, state_c]
+        rW = 0 
+        resonances = {state_a: 1, state_b: 0, state_c: 2}
+
+        # get the transformation W
+        W = W_Floquet_elements(rW, wd, resonances, self.evals, amp / 2 * self.V1_dressed, )
+        # compute A
+        A = np.zeros((3, 3), dtype=complex)
+        for col_idx_k, k_state in enumerate(subsystem_indices):
+            for row_idx_l, l_state in enumerate(subsystem_indices):
+                for q_idx, q_state in enumerate(subsystem_indices):        
+                    nq = resonances[q_state]
+                    for v_idx, v_state in enumerate(subsystem_indices):
+                        U_qv = U[q_idx][v_idx]
+                        nv = resonances[v_state]
+                        W_elem_1 = 0 if not nq in W[rW,q_state,k_state] else np.conj(W[rW,q_state,k_state][nq])
+                        W_elem_2 = 0 if not nv in W[rW,v_state,l_state] else np.conj(W[rW,v_state,l_state][nv])
+                        A[col_idx_k][row_idx_l] += sp.exp(1j*nq*wd*self.tg) * U_qv * W_elem_1 * W_elem_2
+        # Reference state kref for effective Hamiltonian (usually |0>) (with Energy E0)
+        kref = min(resonances.keys())
         
+
+        Heff = 1j/self.tg * logm(A)
+        return Heff
+
     def sweep_parameters(self, list, base_val, i, j, mode, extract_func='omega_ij'):
         """
         Sweep over amplitude or frequency and compute matrix element for each.
@@ -209,7 +239,8 @@ class Setup:
         for amp, fre in tqdm(zip(amp_values, fre_values), total=len(list), 
                              desc=f"Computing element vs {param_label}", ncols=70, bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt}'):
             U = self.compute_U(fre, amp, show_progress=False)
-            Heff = 1j / self.time * logm(U)
+            # Heff = 1j / self.time * logm(U)
+            Heff = self.compute_Heff(fre, amp, U)
             
             if extract_func == 'omega_ij':
                 value = self.extract_Omega_ij(Heff, i, j)
