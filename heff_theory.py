@@ -6,22 +6,22 @@ from helper_function import *
 from simulator import Simulator
 
 config = {
-    'lA': [0.001, 0.2, 50],
-    'lwd': [0.7, 0.712, 50],
-    'hr': True,
+    'lA': [0.001, 0.2, 5],
+    'lwd': [0.7, 0.712, 5],
+    'hr': False,
     'fast': False,
-    'wd_detune': 0.0001,
+    'wd_detune': 0.0001, # in GHz
     'base_amplitude': 0.1,
     'base_wd': 'res',
     'plotA': True,
     'plotF': True,
     'tgate': 200, # in nanoseconds
-    'pulse_shape':'gauss', # 'gauss', 'cos', 'cossin'
+    'pulse_shape':'cos', # 'gauss', 'cos', 'cossin'
     'pulse_args': [0.5], # gauss: sigma=value*tg
     'order': 3,
-    'state_i': 'b',  # 'a', 'b', or 'c' - state index i for sweeps
-    'state_j': 'c',  # 'a', 'b', or 'c' - state index j for sweeps (if i==j, sweeps delta_ii instead of omega_ij)
-    'delta_diff': True,  # if True, calculates delta_ii - delta_jj
+    'state_i': 'a',  # 'a', 'b', or 'c' - state index i for sweeps
+    'state_j': 'b',  # 'a', 'b', or 'c' - state index j for sweeps (if i==j, sweeps delta_ii instead of omega_ij)
+    'delta_diff': False,  # if True, calculates delta_ii - delta_jj
 }
 
 def plot_sweeps(simulator, config):
@@ -121,15 +121,8 @@ def plot_sweeps(simulator, config):
 
 if __name__ == "__main__":
     simulator = Simulator()
-    # setup pulse-shape
-    tgate = config['tgate']
-    simulator.order = config['order']
-    simulator.tgate = tgate # in ns
-    simulator.setup_modulation(config['pulse_shape'], config['pulse_args'])
+    simulator.config(config)
     # base parameters
-    simulator.base_amplitude = config['base_amplitude']*2*np.pi
-    simulator.base_wd = (simulator.res_freq_static if(config['base_wd']=='res') else config['base_wd']) * 2*np.pi
-    simulator.base_wd += config['wd_detune']*2*np.pi
     if config['plotA'] or config['plotF']:
         fig, axes = plot_sweeps(simulator, config)
         plt.show()
