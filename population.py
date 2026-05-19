@@ -1,4 +1,4 @@
-
+import sys
 from helper_function import *
 from utils import Simulator
 from qutip import *
@@ -10,9 +10,9 @@ config = {
     'showA': True, 
     'showB': True, 
     'showC': True,
-    'initial_state': 'a',  # 'a' or 'b' for initial state selection
-    'amplitude': 1,  # in GHz
-    'frequency': 0.706,  # in GHz
+    'initial_state': 'b',  # 'a' or 'b' for initial state selection
+    'amplitude': 0.1,  # in GHz
+    'frequency': 5.41521,  # in GHz (res: 0.7063365266894976) (5.41521)
     'order': 3,
     'tgate': 200,  # in ns
     'pulse_shape': 'cos',  # 'cos', 'cossin', or 'gauss'
@@ -22,7 +22,9 @@ config = {
 def compute_population(simulator, wd, amp, e_ops, initial_state, tg=200):
     """Simulate population dynamics using mesolve."""
     # TODO: check Hermicity, Complex description and Dimension
-    heff = Qobj(simulator.heff(wd, amp))
+    heff_array = simulator.heff(wd, amp)
+    # heff_array[1][1] = 29.6
+    heff = Qobj(heff_array)
     
     tlist = np.linspace(0, tg, 1000)
     
@@ -50,7 +52,6 @@ if __name__ == "__main__":
     # Build e_ops based on config
     e_ops = []
     labels = []
-    from qutip import basis
 
     a = basis(3, 0)
     b = basis(3, 1)
@@ -68,10 +69,10 @@ if __name__ == "__main__":
         e_ops.append(P_c)
         labels.append('State C')
     
-    # Extract parameters from config
     wd = config['frequency'] * 2 * np.pi
     amp = config['amplitude'] * 2 * np.pi
-    print("amp: ", amp, " freq: ", wd, " resonance: ", simulator.res_freq_static)
+    # wd = resonant_wd_solution = simulator.find_resonance(amp) + 0.00000000001
+    print("amp: ", amp, " freq: ", wd/(2*np.pi), " resonance: ", simulator.res_freq_static)
     tg = config['tgate']
     initial_state = config['initial_state']
     # Compute population

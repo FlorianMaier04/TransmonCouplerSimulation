@@ -7,13 +7,13 @@ from simulator import Simulator
 
 config = {
     'lA': [0.001, 0.2, 5],
-    'lwd': [0.7, 0.712, 5],
-    'hr': False,
+    'lwd': [0.7, 0.712, 10],
+    'hr': True,
     'fast': False,
     'wd_detune': 0.0001, # in GHz
     'base_amplitude': 0.1,
     'base_wd': 'res',
-    'plotA': True,
+    'plotA': False,
     'plotF': True,
     'tgate': 200, # in nanoseconds
     'pulse_shape':'cos', # 'gauss', 'cos', 'cossin'
@@ -21,7 +21,7 @@ config = {
     'order': 3,
     'state_i': 'a',  # 'a', 'b', or 'c' - state index i for sweeps
     'state_j': 'b',  # 'a', 'b', or 'c' - state index j for sweeps (if i==j, sweeps delta_ii instead of omega_ij)
-    'delta_diff': False,  # if True, calculates delta_ii - delta_jj
+    'delta_diff': True,  # if True, calculates delta_ii - delta_jj
 }
 
 def plot_sweeps(simulator, config):

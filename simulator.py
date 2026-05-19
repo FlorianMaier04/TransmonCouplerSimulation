@@ -41,7 +41,7 @@ class Simulator:
         self.state_b = 1  # state |001>
         self.state_c = dim_q2  # state |010>
         self.order = 2
-        self.resonances = {self.state_a: 1, self.state_b: 0, self.state_c: 2,}  # E_state_a - wd = E_state_b
+        self.resonances = {self.state_a: 0, self.state_b: 1, self.state_c: 2,}  # E_state_a - wd = E_state_b
         # Convert frequencies and couplings to rad/ns frequencies are given in GHz
         self.w1_num = w1 * 2 * np.pi
         self.alpha1_num = alpha1 * 2 * np.pi

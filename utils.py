@@ -8,6 +8,8 @@ from Floquet_perturbation_theory import *
 from helper_function import *
 from IPython.display import display
 from scipy.linalg import logm
+from scipy.optimize import fsolve
+
 
 class Simulator:
 
@@ -103,6 +105,41 @@ class Simulator:
         delta = Heff_Floquet_summed(self.order, i, j, wd, self.resonances, self.evals, amp/2*self.V1_dressed_array, V0=None)
         return delta
     
+    
+    def resonant_condition(self, fre, amp, order, i, f, ):
+        fre = float(np.atleast_1d(fre)[0])
+        delta_i = Heff_Floquet_summed(
+            self.order,
+            i,
+            i,
+            fre,
+            {i: 1, f: 0},  # E_i - wd = E_f
+            self.evals,
+            amp / 2 * self.V1_dressed_array,
+            V0=None,
+            analytics=False,
+        )
+        delta_f = Heff_Floquet_summed(
+            order,
+            f,
+            f,
+            fre,
+            {i: 1, f: 0},  # E_i - wd = E_f
+            self.evals,
+            amp / 2 * self.V1_dressed_array,
+            V0=None,
+            analytics=False,
+        )
+        diff = delta_f - delta_i
+        return float(np.real(diff))
+
+    def find_resonance(self, amp):
+        wd_initial_guess = self.res_freq_static * 2*np.pi
+        resonant_wd_solution= fsolve(self.resonant_condition, wd_initial_guess, 
+            args=(amp, self.order, self.state_a, self.state_b,),)
+        return resonant_wd_solution[0]
+        
+
     def heff(self, wd, amp):
         heff = np.zeros((3,3))
         states = [self.state_a, self.state_b, self.state_c]
