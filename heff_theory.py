@@ -7,11 +7,11 @@ from simulator import Simulator
 
 config = {
     'lA': [0.001, 0.2, 5],
-    'lwd': [0.7, 0.712, 10],
+    'lwd': [0.7, 0.712, 5],
     'hr': True,
     'fast': False,
     'wd_detune': 0.0001, # in GHz
-    'base_amplitude': 0.1,
+    'base_amplitude': 0,
     'base_wd': 'res',
     'plotA': False,
     'plotF': True,

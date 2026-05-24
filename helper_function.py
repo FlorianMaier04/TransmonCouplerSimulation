@@ -300,7 +300,7 @@ def Psi_t_FloquetPerturb(rH, rW, wd, amp, resonances, E, V_posHarm, initial_stat
         )
     return psi_t, W_element
 
-### --- Optimize maximal fidelity with iSWAP gate with respect to time --- ###
+
 
 def find_optimal_time(fre, amp, order, i, f, l, E0, V1, t_guess):
     """

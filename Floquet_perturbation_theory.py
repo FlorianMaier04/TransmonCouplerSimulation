@@ -86,7 +86,7 @@ def Heff_Floquet(r, b, a, wd, resonances, E, V_posHarm, V0=None, ref_state=None,
     V0 = np.zeros((D, D), dtype=dtype_E) if V0 is None else np.array(V0, dtype=dtype_E)
     ## Choose a reference state for the detuning, if it is not given
     if ref_state is None:
-        ref_state = min(resonances.keys())
+        ref_state = min(resonances.keys())      
     ## Put detuning in perturbation and set energy of final state to resonance. By def delta[k] = E[k] - E[ref_state] - (resonances[k] - resonances[ref_state])*wd
     for k in resonances.keys():
         if k != ref_state:
@@ -174,7 +174,11 @@ def Heff_Floquet(r, b, a, wd, resonances, E, V_posHarm, V0=None, ref_state=None,
                             pert_ratio = V_element / energy_gap
                             max_pert_ratio = max(max_pert_ratio, pert_ratio)
                             if max_pert_ratio == pert_ratio:
-                                max_pert_index = {'a': k[j+1], 'b': k[j], 'ptot': ptot, 'p':p[j+1]}
+                                max_pert_index = {'a': k[j+1], 'b': k[j], 'ptot': ptot, 'p':p[j+1]} 
+                    denominator = (E[a] + ptot*wd - E[k[j]])
+                    if(denominator==0):
+                        print("denominator 0")
+                        print("E[a]: ", E[a], " E[k[j]]: ", E[k[j]], " index: ", k[j] , " a_index: ", a)
                     contrib = contrib*V(p[j+1])[k[j+1], k[j]]/(E[a] + ptot*wd - E[k[j]])
                 if printProcesses and ( (analytics and contrib != 0) or (not analytics and not np.isclose(contrib, 0, atol=1e-12))):
                     nbProcesses += 1

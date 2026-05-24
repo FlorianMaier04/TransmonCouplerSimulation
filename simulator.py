@@ -40,8 +40,9 @@ class Simulator:
         self.state_a = dim_q2 * dim_c  # state |100>
         self.state_b = 1  # state |001>
         self.state_c = dim_q2  # state |010>
+        self.state_d = 2 # state |002> # this state is at same energy as state_a at the resonant frequency
         self.order = 2
-        self.resonances = {self.state_a: 0, self.state_b: 1, self.state_c: 2,}  # E_state_a - wd = E_state_b
+        self.resonances = {self.state_a: 1, self.state_b: 0, self.state_c: 2, self.state_d: 1}  # E_state_a - wd = E_state_b
         # Convert frequencies and couplings to rad/ns frequencies are given in GHz
         self.w1_num = w1 * 2 * np.pi
         self.alpha1_num = alpha1 * 2 * np.pi
@@ -75,8 +76,10 @@ class Simulator:
         H0 = Hq1 + Hq2 + Hc + V0
         V1 = self.a_qc.dag() @ self.a_qc
         # Diagonalize H0
-        self.evals, evecs = H0.eigenstates()
-        self.sorted_evals, self.sorted_evecs = SortedFRFSpectrum(self.evals, evecs, self.dim_q1, self.dim_c, self.dim_q2)
+        evals, evecs = H0.eigenstates()
+        self.sorted_evals, self.sorted_evecs = SortedFRFSpectrum(evals, evecs, self.dim_q1, self.dim_c, self.dim_q2)
+        self.E_array = self.sorted_evals.reshape(self.d)
+        self.E_states = self.sorted_evecs.reshape(self.d)
         self.t_interaction_picture = Qobj(
             np.column_stack([
                 self.sorted_evecs[i, j, k].full()
@@ -127,12 +130,12 @@ class Simulator:
     
     def delta(self, i, wd, amp):
         fourier_coeffs = self.fourier_coeffs(wd, amp, Simulator.N)
-        delta = Heff_Floquet_summed(self.order, i, i, wd, self.resonances, self.evals, fourier_coeffs[1:], V0=fourier_coeffs[0])
+        delta = Heff_Floquet_summed(self.order, i, i, wd, self.resonances, self.E_array, fourier_coeffs[1:], V0=fourier_coeffs[0])
         return delta
 
     def extract_Omega_ij(self, i, j, wd, amp):
         fourier_coeffs = self.fourier_coeffs(wd, amp, Simulator.N)
-        omega_ij = Heff_Floquet_summed(self.order, i, j, wd, self.resonances, self.evals, fourier_coeffs[1:], V0=fourier_coeffs[0])
+        omega_ij = Heff_Floquet_summed(self.order, i, j, wd, self.resonances, self.E_array, fourier_coeffs[1:], V0=fourier_coeffs[0])
         return omega_ij
 
     def sweep_amplitude(self, amplitude_values, base_wd, i, j):

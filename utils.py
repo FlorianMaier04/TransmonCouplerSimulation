@@ -12,9 +12,6 @@ from scipy.optimize import fsolve
 
 
 class Simulator:
-
-    N = 10
-
     @property 
     def gt(self):
         return self._gt
@@ -42,8 +39,12 @@ class Simulator:
         self.state_a = dim_q2 * dim_c  # state |100>
         self.state_b = 1  # state |001>
         self.state_c = dim_q2  # state |010>
+        self.state_d = 2 # state |002> # this state is at same energy as state_a at the resonant frequency
+        self.state_e = 1*(dim_c*dim_q2)+1*(dim_q2)+1 # |111>
+
         self.order = 2
-        self.resonances = {self.state_a: 1, self.state_b: 0, self.state_c: 2,}  # E_state_a - wd = E_state_b
+        self.resonances = {self.state_a: 1, self.state_b: 0, self.state_c: 2}  # E_state_a - wd = E_state_b
+        self.sd = len(self.resonances)
         # Convert frequencies and couplings to rad/ns frequencies are given in GHz
         self.w1_num = w1 * 2 * np.pi
         self.alpha1_num = alpha1 * 2 * np.pi
@@ -57,7 +58,6 @@ class Simulator:
         self.tg = 200 # in ns
         self._setup_operators()
         self._setup_hamiltonian()
-        self._setup_projectors()
 
     def _setup_operators(self):
         """Initialize creation/annihilation operators."""
@@ -78,8 +78,10 @@ class Simulator:
         H0 = Hq1 + Hq2 + Hc + V0
         V1 = self.a_qc.dag() @ self.a_qc
         # Diagonalize H0
-        self.evals, evecs = H0.eigenstates()
-        self.sorted_evals, self.sorted_evecs = SortedFRFSpectrum(self.evals, evecs, self.dim_q1, self.dim_c, self.dim_q2)
+        evals, evecs = H0.eigenstates()
+        self.sorted_evals, self.sorted_evecs = SortedFRFSpectrum(evals, evecs, self.dim_q1, self.dim_c, self.dim_q2)
+        self.E_array = self.sorted_evals.reshape(self.d)
+        self.E_states = self.sorted_evecs.reshape(self.d)
         self.t_interaction_picture = Qobj(
             np.column_stack([
                 self.sorted_evecs[i, j, k].full()
@@ -95,16 +97,9 @@ class Simulator:
         # Resonant frequency
         self.res_freq_static = (self.sorted_evals[1, 0, 0] - self.sorted_evals[0, 0, 1]) / (2 * np.pi)
 
-    def _setup_projectors(self):
-        """Setup projectors for states A, B, and C."""
-        self.projection_a = self.sorted_evecs[1, 0, 0] @ self.sorted_evecs[1, 0, 0].dag()
-        self.projection_c = self.sorted_evecs[0, 1, 0] @ self.sorted_evecs[0, 1, 0].dag()
-        self.projection_b = self.sorted_evecs[0, 0, 1] @ self.sorted_evecs[0, 0, 1].dag()
-                
     def heff_element(self, i, j, wd, amp):
-        delta = Heff_Floquet_summed(self.order, i, j, wd, self.resonances, self.evals, amp/2*self.V1_dressed_array, V0=None)
+        delta = Heff_Floquet_summed(self.order, i, j, wd, self.resonances, self.E_array, amp/2*self.V1_dressed_array, V0=None)
         return delta
-    
     
     def resonant_condition(self, fre, amp, order, i, f, ):
         fre = float(np.atleast_1d(fre)[0])
@@ -113,8 +108,8 @@ class Simulator:
             i,
             i,
             fre,
-            {i: 1, f: 0},  # E_i - wd = E_f
-            self.evals,
+            self.resonances,  # E_i - wd = E_f
+            self.E_array,
             amp / 2 * self.V1_dressed_array,
             V0=None,
             analytics=False,
@@ -124,8 +119,8 @@ class Simulator:
             f,
             f,
             fre,
-            {i: 1, f: 0},  # E_i - wd = E_f
-            self.evals,
+            self.resonances,  # E_i - wd = E_f
+            self.E_array,
             amp / 2 * self.V1_dressed_array,
             V0=None,
             analytics=False,
@@ -134,15 +129,17 @@ class Simulator:
         return float(np.real(diff))
 
     def find_resonance(self, amp):
-        wd_initial_guess = self.res_freq_static * 2*np.pi
+        wd_initial_guess = 1*self.res_freq_static * 2*np.pi
+        # wd_initial_guess = 0.5*2*np.pi
         resonant_wd_solution= fsolve(self.resonant_condition, wd_initial_guess, 
             args=(amp, self.order, self.state_a, self.state_b,),)
-        return resonant_wd_solution[0]
+        return resonant_wd_solution
         
 
     def heff(self, wd, amp):
-        heff = np.zeros((3,3))
-        states = [self.state_a, self.state_b, self.state_c]
+        d_subspace = len(self.resonances.keys())
+        heff = np.zeros((d_subspace, d_subspace))
+        states = [*self.resonances.keys()]
         for idx_a, state_a in enumerate(states):
             for idx_b, state_b in enumerate(states):
                 heff[idx_a,idx_b] = self.heff_element(state_a, state_b, wd, amp)
@@ -152,6 +149,63 @@ class Simulator:
     def config(self, config):
         """Configure the simulator with provided settings."""
         self.tg = config.get('tgate', 200)
-        self.order = config.get('order', 2)
-        pulse_shape = config.get('pulse_shape', 'cos')
-        pulse_args = config.get('pulse_args', [])
+        self.order = config.get('order', 3)
+
+    def get_state_name(self, idx):
+        match idx:
+            case self.state_a:
+                return 'a'
+            case self.state_b:
+                return 'b'
+            case self.state_c:
+                return 'c'
+            case self.state_d:
+                return 'd'
+
+config = {
+    'showA': True, 
+    'showB': True, 
+    'showC': True,
+    'initial_state': 'b',  # 'a' or 'b' for initial state selection
+    'amplitude': 0.1,  # in GHz
+    'frequency': 0.7063365266,  # in GHz (res: 0.7063365266894976) (5.41521)
+    'order': 2,
+    'tgate': 600,  # in ns
+    'pulse_shape': 'cos',  # 'cos', 'cossin', or 'gauss'
+    'pulse_args': [0.5],  # for gauss: [sigma_fraction]
+}
+
+if __name__ == "__main__":
+    simulator = Simulator()
+    simulator.config(config)
+    amp = 0.1 * 2*np.pi
+    resonances = simulator.find_resonance(amp)
+    resonance_freq = resonances[0] / (2*np.pi)  # in GHz
+    print(f"Resonante Frequenz: {resonances/(2*np.pi)} GHz")
+    
+    # Genauigkeit für den Sweep um die Nullstelle (10er-Potenz, z.B. -3 = 0.001)
+    precision_power = -8
+    precision = 10**precision_power
+    
+    # Bereich um die Nullstelle
+    sweep_range = 0.01*precision*1e3  # ±10 MHz um die Nullstelle
+    freq_range = np.arange(resonance_freq - sweep_range, resonance_freq + sweep_range, precision)
+    # Magnitude des Heff-Elements berechnen
+    magnitudes_db = []
+    for freq in freq_range:
+        heff = simulator.heff(freq * 2*np.pi, amp)
+        # Magnitude des off-diagonal Elements |Heff[0,1]|
+        magnitude = heff[1, 1] - heff[2,2]
+        # magnitude_db = 20 * np.log10(magnitude + 1e-10)  # +1e-10 um log(0) zu vermeiden
+        magnitudes_db.append(magnitude)
+    # Plot um die Nullstelleq
+    plt.figure(figsize=(10, 6))
+    plt.plot((freq_range - resonance_freq) * 1000, magnitudes_db, 'b-', linewidth=2)  # x-Achse in MHz
+    plt.axvline(x=0, color='r', linestyle='--', label='Resonante Frequenz')
+    plt.xlabel('Detuning (MHz)')
+    plt.ylabel('|Heff[0,1]| (dB)')
+    plt.title(f'Heff-Magnitude um die Nullstelle (Genauigkeit: 10^{precision_power})')
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    # plt.show()
