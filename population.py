@@ -1,69 +1,45 @@
 import sys
 from helper_function import *
-from utils import Simulator
+from utils import *
 from qutip import *
 import numpy as np
 import matplotlib.pyplot as plt
-from IPython.display import display
 
 config = {
-    'show_normal': True, 
-    'initial_state': 'a',  # 'a' or 'b' for initial state selection
-    'amplitude': 0.1,  # in GHz
-    'frequency': 0.7063365266894976 ,  # in GHz (res: 0.7063365266894976) (5.41521)
-    'order': 3,
-    'tgate': 300,  # in ns
+    'show_direct': False,
+    'plot_epsilon': False,  # if True, plot epsilon_x and epsilon_y against t and exit
+    'initial_state': 'b',  # 'a' or 'b' for initial state selection
+    'amplitude': 0.2,  # in GHz
+    'detune': 0.00389, # in GHz # 223
     'pulse_shape': 'cos',  # 'cos', 'cossin', or 'gauss'
     'pulse_args': [0.5],  # for gauss: [sigma_fraction]
 }
 
-def simulate_normal(simulator, wd, amp, psi0, tg=200):
-    tlist = np.linspace(0, tg, 1000)
+def simulate_direct(simulator, wd, amp, psi0, tlist):
     psi0_state = simulator.E_states[psi0]
     ops = [simulator.E_states[state] @ simulator.E_states[state].dag() for state in simulator.resonances.keys()]
     result = mesolve([simulator.H0_dressed, [simulator.V1_dressed, lambda t,args: amp*np.cos(wd*t)]], 
-                     psi0_state,tlist, [], ops)
-    return result, tlist
+                     psi0_state,tlist, c_ops=[], e_ops=ops)
+    return result
 
-def compute_phi0(simulator, wd, amp, psi0): 
-    rW = 2
-    W = W_Floquet_elements(rW, wd, simulator.resonances, simulator.E_array, amp/2 * simulator.V1_dressed_array,
-                        None, ref_state = None, analytics = False)
-    # express phi0 in the resonant subspace, assuming psi0 is no superposition and lies in the res. subspace
-    phi0 = qt.zero_ket(simulator.sd)
-    projections = [None] * simulator.sd
-    for idx, a in enumerate(simulator.resonances.keys()):
-        dic = W[rW, psi0, a]
-        n_psi0 = simulator.resonances[psi0] 
-        if n_psi0 in dic: c = np.conj(dic[n_psi0])
-        else: c = 0
-        phi0 += c * qt.basis(simulator.sd, idx)
-        projections[idx] = qt.basis(simulator.sd, idx).proj()
-        # projections[idx] = c * np.conj(c) * qt.basis(simulator.sd, idx).proj()
-    phi0 = phi0.unit()
-    print("phi0: ", phi0)
-    return phi0, projections
-
-def simulate_sambe(simulator, wd, amp, psi0, tg=200):
-    """Simulate population dynamics using mesolve."""
-    # TODO: check Hermicity, Complex description and Dimension
-    ops = [qt.basis(simulator.sd, idx).proj() for idx, _ in enumerate(simulator.resonances)]
-    heff_array = simulator.heff(wd, amp)
-    # heff_array[1][1] = 29.6
-    heff = Qobj(heff_array)
+def simulate_sambe(s, wd, amp, psi0):
+    heff = (s.heff(wd, amp))
+    Omega_ab = heff[0][1]
+    # find the optimal gate time
+    tg,_,_ = find_optimal_time(wd,amp,s.order,
+        s.state_b,s.state_a,s.state_c,s.E_array,s.V1_dressed_array, int(np.pi/(2*Omega_ab)),)
+    tlist = np.arange(0, tg, 0.01)
+    phi0, ops = compute_phi0(s, wd, amp, psi0)
     
-    tlist = np.linspace(0, tg, 1000)
-    
-    phi0, ops = compute_phi0(simulator, wd, amp, psi0)
-    display(heff)
-    print(type(ops[1]))
-    # Simulate using mesolve
+    time_transformed_h = compute_t_dependency(s, heff, wd, tg)
+    n_steps = 50000
     result = mesolve(
-        [heff],
+        time_transformed_h,
         phi0,
         tlist,
-        [],
-        ops,
+        c_ops=[],
+        e_ops=ops,
+        options={'nsteps':n_steps,},
     )
     return result, tlist
 
@@ -108,38 +84,32 @@ def show_result(simulator, r, tlist, ax_normal, ax_log, sambe=True):
         )
 
 if __name__ == "__main__":
-    simulator = Simulator()
-    simulator.config(config)
-    
-    # Build e_ops based on config
-    labels = []
-    wd = config['frequency'] * 2 * np.pi
-    amp = config['amplitude'] * 2 * np.pi
+    simulator = Simulation()
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax_log = ax.twinx()
 
-    print("amp: ", amp, " freq: ", wd/(2*np.pi), " resonance: ", simulator.res_freq_static)
-    tg = config['tgate']
+    amp = config['amplitude'] * 2 * np.pi
+    detune = config['detune'] * 2 * np.pi
+    wd = simulator.find_resonance(amp) + detune
     psi0 = None
     if config['initial_state']=='a':
         psi0 = simulator.state_a
     elif config['initial_state']=='b':
         psi0 = simulator.state_b
-    # Compute population
-    result, tlist = simulate_sambe(simulator, wd, amp, psi0, tg)
-    if(config['show_normal']):
-        result_normal, tlist = simulate_normal(simulator, wd, amp, psi0, tg)
-    # Plot results
-    fig, ax = plt.subplots(figsize=(10, 6))
-    # Separate c-population from other populations
-    c_index = None
-    ax_log = ax.twinx()
+    if config['plot_epsilon']:
+        plot_pulse_functions(100, amp, np.linspace(0, 100, 1000))
+        sys.exit(0)
 
-    if(config['show_normal']): show_result(simulator, result_normal, tlist, ax, ax_log, sambe=False) 
+    result, tlist = simulate_sambe(simulator, wd, amp, psi0)
+    if(config['show_direct']): 
+        result_normal = simulate_direct(simulator, wd, amp, psi0, tlist)
+        show_result(simulator, result_normal, tlist, ax, ax_log, sambe=False) 
     show_result(simulator, result, tlist, ax, ax_log)
     # Create title with parameters
     title = f'Population Dynamics\n'
     title += f'Amplitude: {config["amplitude"]} GHz, '
-    title += f'Frequency: {config["frequency"]} GHz, '
-    title += f'Gate Time: {tg} ns, '
+    title += f'Frequency: {wd/(2*np.pi):2f} GHz, '
+    title += f'Gate Time: {tlist[-1]} ns, '
     title += f'Initial State: {config['initial_state'].upper()}'
     
     ax.set_xlabel('Time (ns)', fontsize=12)
@@ -148,13 +118,13 @@ if __name__ == "__main__":
     ax.grid(True, alpha=0.3)
     ax.set_ylim([0, 1.05])
     ax_log.set_ylabel('Population (log scale)', fontsize=12)
-    ax_log.set_ylim([1e-5, 1.0])
+    ax_log.set_ylim([1e-6, 1.0])
     ax_log.set_yscale('log')
 
     # Combine legends from both axes
     lines_ax, labels_ax = ax.get_legend_handles_labels()
     lines_c, labels_c = ax_log.get_legend_handles_labels()
-    ax.legend(lines_ax + lines_c, labels_ax + labels_c, fontsize=11, loc='best')
+    ax.legend(lines_ax + lines_c, labels_ax + labels_c, fontsize=11, loc='lower center')
     
     plt.tight_layout()
     plt.show()

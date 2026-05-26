@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
-from simulator import Simulator
+from TransmonCouplerSimulation.historic.simulator import Simulator
 from tqdm import tqdm
 
 # Configuration similar to heff_theory.py

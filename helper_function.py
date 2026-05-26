@@ -356,7 +356,7 @@ def find_optimal_time(fre, amp, order, i, f, l, E0, V1, t_guess):
 
     # Evolve each basis state and construct unitary matrix
     for j, initial_state in enumerate(initial_state_list):
-        psi_t = Psi_t_FloquetPerturb(
+        psi_t, _ = Psi_t_FloquetPerturb(
             order, 0, fre, amp,
             {i: 1, f: 0, l: 2},
             E0, V1, initial_state, tlist,

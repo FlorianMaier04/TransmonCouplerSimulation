@@ -9,9 +9,10 @@ from helper_function import *
 from IPython.display import display
 from scipy.linalg import logm
 from scipy.optimize import fsolve
+import scipy.special
 
 
-class Simulator:
+class Simulation:
     @property 
     def gt(self):
         return self._gt
@@ -36,14 +37,13 @@ class Simulator:
         """
         self.dim_q1, self.dim_q2, self.dim_c = dim_q1, dim_q2, dim_c
         self.d = self.dim_q1 * self.dim_c * self.dim_q2
-        self.state_a = dim_q2 * dim_c  # state |100>
-        self.state_b = 1  # state |001>
+        self.state_b = dim_q2 * dim_c  # state |100>
+        self.state_a = 1  # state |001>
         self.state_c = dim_q2  # state |010>
         self.state_d = 2 # state |002> # this state is at same energy as state_a at the resonant frequency
         self.state_e = 1*(dim_c*dim_q2)+1*(dim_q2)+1 # |111>
-
-        self.order = 2
-        self.resonances = {self.state_a: 1, self.state_b: 0, self.state_c: 2}  # E_state_a - wd = E_state_b
+        self.order = 3
+        self.resonances = {self.state_a: 0, self.state_b: 1, self.state_c: 2}  # E_state_a - wd = E_state_b
         self.sd = len(self.resonances)
         # Convert frequencies and couplings to rad/ns frequencies are given in GHz
         self.w1_num = w1 * 2 * np.pi
@@ -98,8 +98,8 @@ class Simulator:
         self.res_freq_static = (self.sorted_evals[1, 0, 0] - self.sorted_evals[0, 0, 1]) / (2 * np.pi)
 
     def heff_element(self, i, j, wd, amp):
-        delta = Heff_Floquet_summed(self.order, i, j, wd, self.resonances, self.E_array, amp/2*self.V1_dressed_array, V0=None)
-        return delta
+        element = Heff_Floquet_summed(self.order, i, j, wd, self.resonances, self.E_array, (amp/2 * (1+0j))*self.V1_dressed_array, V0=None)
+        return element
     
     def resonant_condition(self, fre, amp, order, i, f, ):
         fre = float(np.atleast_1d(fre)[0])
@@ -108,7 +108,7 @@ class Simulator:
             i,
             i,
             fre,
-            self.resonances,  # E_i - wd = E_f
+            self.resonances,
             self.E_array,
             amp / 2 * self.V1_dressed_array,
             V0=None,
@@ -119,7 +119,7 @@ class Simulator:
             f,
             f,
             fre,
-            self.resonances,  # E_i - wd = E_f
+            self.resonances,
             self.E_array,
             amp / 2 * self.V1_dressed_array,
             V0=None,
@@ -129,27 +129,38 @@ class Simulator:
         return float(np.real(diff))
 
     def find_resonance(self, amp):
-        wd_initial_guess = 1*self.res_freq_static * 2*np.pi
-        # wd_initial_guess = 0.5*2*np.pi
-        resonant_wd_solution= fsolve(self.resonant_condition, wd_initial_guess, 
+        wd_initial_guess = self.res_freq_static * 2*np.pi
+        resonant_wd_solution = fsolve(self.resonant_condition, wd_initial_guess, 
             args=(amp, self.order, self.state_a, self.state_b,),)
-        return resonant_wd_solution
-        
+        return resonant_wd_solution[0]
 
     def heff(self, wd, amp):
-        d_subspace = len(self.resonances.keys())
-        heff = np.zeros((d_subspace, d_subspace))
+        heff = np.zeros((self.sd, self.sd), dtype=complex)
         states = [*self.resonances.keys()]
         for idx_a, state_a in enumerate(states):
             for idx_b, state_b in enumerate(states):
                 heff[idx_a,idx_b] = self.heff_element(state_a, state_b, wd, amp)
         return heff
-
     
-    def config(self, config):
-        """Configure the simulator with provided settings."""
-        self.tg = config.get('tgate', 200)
-        self.order = config.get('order', 3)
+    def extract_fidelity(self, lh, tlist):
+        U_ideal = np.array([[0, 1j, 0], [1j, 0, 0], [0, 0, 1]], dtype=complex)
+        U_subsys = np.zeros((self.sd, self.sd), dtype=complex)
+        for col_idx, _ in enumerate(self.resonances): 
+            phi0 = qt.basis(self.sd, col_idx)
+            result = mesolve(
+                lh,
+                phi0,
+                tlist,
+                e_ops=[],
+            )
+            final_state = result.states[-1]
+            # Extract subsystem components to form column of unitary
+            for row_idx, j_state in enumerate(self.resonances):
+                U_subsys[row_idx, col_idx] = final_state.full()[row_idx, 0]
+            # Compute gate fidelity: F = |Tr(U_ideal† U_subsystem)|² / 3²
+        trace_overlap = np.trace(U_ideal.conj().T @ U_subsys)
+        fidelity = np.abs(trace_overlap) ** 2 / 3**2
+        return fidelity
 
     def get_state_name(self, idx):
         match idx:
@@ -162,50 +173,98 @@ class Simulator:
             case self.state_d:
                 return 'd'
 
-config = {
-    'showA': True, 
-    'showB': True, 
-    'showC': True,
-    'initial_state': 'b',  # 'a' or 'b' for initial state selection
-    'amplitude': 0.1,  # in GHz
-    'frequency': 0.7063365266,  # in GHz (res: 0.7063365266894976) (5.41521)
-    'order': 2,
-    'tgate': 600,  # in ns
-    'pulse_shape': 'cos',  # 'cos', 'cossin', or 'gauss'
-    'pulse_args': [0.5],  # for gauss: [sigma_fraction]
-}
 
-if __name__ == "__main__":
-    simulator = Simulator()
-    simulator.config(config)
-    amp = 0.1 * 2*np.pi
-    resonances = simulator.find_resonance(amp)
-    resonance_freq = resonances[0] / (2*np.pi)  # in GHz
-    print(f"Resonante Frequenz: {resonances/(2*np.pi)} GHz")
+def sigma_x_ij(i, j, d):
+    ei = basis(d, i)
+    ej = basis(d, j)
+    return ej*ei.dag() + ei*ej.dag()
+
+def sigma_y_ij(i, j, d):
+    ei = basis(d, i)
+    ej = basis(d, j)
+    return -1j*ei*ej.dag() + 1j*ej*ei.dag()
+
+def compute_phi0(s, wd, amp, psi0): 
+    rW = 2
+    W = W_Floquet_elements(rW, wd, s.resonances, s.E_array, amp/2 * s.V1_dressed_array,
+                        None, ref_state = None, analytics = False)
+    # express phi0 in the resonant subspace, assuming psi0 is no superposition and lies in the res. subspace
+    phi0 = qt.zero_ket(s.sd)
+    projections = [None] * s.sd
+    for idx, a in enumerate(s.resonances.keys()):
+        dic = W[rW, psi0, a]
+        n_psi0 = s.resonances[psi0]
+        if n_psi0 in dic: c = np.conj(dic[n_psi0])
+        else: c = 0
+        # if(c!=0): print("idx: ", a, " c: ", c, " richtiger idx: ", idx)
+        phi0 += c * qt.basis(s.sd, idx)
+        projections[idx] = qt.basis(s.sd, idx).proj()
+        # projections[idx] = c * np.conj(c) * qt.basis(simulator.sd, idx).proj()
+    if psi0 == s.state_a:
+        phi0 = qt.basis(s.sd, 0)
+    phi0 = phi0.unit()
+    # print("phi0: ", phi0)
+    return phi0, projections
+
+def compute_t_dependency(s, heff ,wd, tg):
+    H = np.zeros((s.sd, s.sd), dtype=complex)
+    # V = [None] * (int(scipy.special.binom(s.sd, 2))*2)
+    Vx = [None] * (s.sd - 1)
+    Vy = [None] * (s.sd - 1)
+    delta0 = heff[0][0]
+    Delta = - 2* heff[1][1] + heff[2][2] + delta0
+    epsilon_x, epsilon_y = pulse_functions_gauss(tg, 1.0*Delta)
+    # epsilon_y = lambda t, args: 0
+    # epsilon_x = lambda t, args: 1 if t<tg else 0 
     
-    # Genauigkeit für den Sweep um die Nullstelle (10er-Potenz, z.B. -3 = 0.001)
-    precision_power = -8
-    precision = 10**precision_power
-    
-    # Bereich um die Nullstelle
-    sweep_range = 0.01*precision*1e3  # ±10 MHz um die Nullstelle
-    freq_range = np.arange(resonance_freq - sweep_range, resonance_freq + sweep_range, precision)
-    # Magnitude des Heff-Elements berechnen
-    magnitudes_db = []
-    for freq in freq_range:
-        heff = simulator.heff(freq * 2*np.pi, amp)
-        # Magnitude des off-diagonal Elements |Heff[0,1]|
-        magnitude = heff[1, 1] - heff[2,2]
-        # magnitude_db = 20 * np.log10(magnitude + 1e-10)  # +1e-10 um log(0) zu vermeiden
-        magnitudes_db.append(magnitude)
-    # Plot um die Nullstelleq
-    plt.figure(figsize=(10, 6))
-    plt.plot((freq_range - resonance_freq) * 1000, magnitudes_db, 'b-', linewidth=2)  # x-Achse in MHz
-    plt.axvline(x=0, color='r', linestyle='--', label='Resonante Frequenz')
-    plt.xlabel('Detuning (MHz)')
-    plt.ylabel('|Heff[0,1]| (dB)')
-    plt.title(f'Heff-Magnitude um die Nullstelle (Genauigkeit: 10^{precision_power})')
-    plt.grid(True, alpha=0.3)
+    for i, _ in enumerate(s.resonances):
+        # diagonal element
+        delta = heff[i][i] - delta0
+        H[i][i] = delta
+        if i+1 == s.sd: continue
+        lambda_i = heff[i][i+1].real * 2
+        coeff_img = heff[i][i+1].imag
+        Vx[i] = [sigma_x_ij(i, i+1, s.sd) * lambda_i * 1/2, epsilon_x]
+        Vy[i] = [sigma_y_ij(i, i+1, s.sd) * lambda_i * 1/2, epsilon_y]
+        # for j, _ in enumerate(s.resonances):
+        #     if j==i or i>j: continue
+        #     coeff_real = heff[i][j].real
+        #     coeff_img = heff[i][j].imag
+        #     V[(i+j-1)*2] = [sigma_x_ij(i, j, s.sd) * coeff_real, epsilon_x]
+        #     V[(i+j-1)*2+1] = [sigma_y_ij(i, j, s.sd) * coeff_img, epsilon_y]
+            # print("V number: ", ((i+j-1)*2))
+            # display(V[(i+j-1)*2])
+    return [Qobj(H), *Vx, *Vy]
+    # return [Qobj(H), *Vx]
+
+def pulse_functions_gauss(tg, Delta):
+    sigma = 1.0 * tg
+    amp = tg * (np.sqrt(2*np.pi)*sigma*scipy.special.erf(tg/(2*np.sqrt(2)*sigma)) -
+                np.exp(-tg**2/(8*sigma**2)) * tg)**-1
+    B = np.exp(-tg**2 / (8 * sigma**2)) * amp
+    epsilon_x = lambda t, args=None: max(0, amp * np.exp(-(t - tg / 2)**2 / (2 * sigma**2)) - B)
+    dt = 1e-6
+    epsilon_y = lambda t, args=None: -(
+        epsilon_x(t + dt) - epsilon_x(t - dt)
+    ) / (2 * dt) * 1/Delta
+    # epsilon_x = lambda t, args=None: 1 if t < tg else 0 
+    # epsilon_y = lambda t,args=None: 0
+    return epsilon_x, epsilon_y
+
+def plot_pulse_functions(tgate, amp, tlist=None):
+    if tlist is None:
+        tlist = np.linspace(0, tgate, 1000)
+    epsilon_x, epsilon_y = pulse_functions_gauss(tgate, 1)
+    x_vals = np.array([epsilon_x(t) for t in tlist])
+    y_vals = np.array([epsilon_y(t) for t in tlist])
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(tlist, x_vals, label=r'$\epsilon_x$', linewidth=2)
+    plt.plot(tlist, y_vals, label=r'$\epsilon_y$', linewidth=2)
+    plt.xlabel('Time (ns)')
+    plt.ylabel('Pulse amplitude')
+    plt.title('Pulse functions $\epsilon_x$ and $\epsilon_y$ vs. time')
+    plt.grid(alpha=0.3)
     plt.legend()
     plt.tight_layout()
-    # plt.show()
+    plt.show()
