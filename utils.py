@@ -55,7 +55,6 @@ class Simulation:
         self.g1c_num = g1c * 2 * np.pi
         self.g2c_num = g2c * 2 * np.pi
         self.g12_num = g12 * 2 * np.pi
-        self.tg = 200 # in ns
         self._setup_operators()
         self._setup_hamiltonian()
 
@@ -103,12 +102,13 @@ class Simulation:
     
     def resonant_condition(self, fre, amp, order, i, f, ):
         fre = float(np.atleast_1d(fre)[0])
+        resonances = {self.state_a:0, self.state_b:1}
         delta_i = Heff_Floquet_summed(
             self.order,
             i,
             i,
             fre,
-            self.resonances,
+            resonances,
             self.E_array,
             amp / 2 * self.V1_dressed_array,
             V0=None,
@@ -119,7 +119,7 @@ class Simulation:
             f,
             f,
             fre,
-            self.resonances,
+            resonances,
             self.E_array,
             amp / 2 * self.V1_dressed_array,
             V0=None,
@@ -157,9 +157,8 @@ class Simulation:
             # Extract subsystem components to form column of unitary
             for row_idx, j_state in enumerate(self.resonances):
                 U_subsys[row_idx, col_idx] = final_state.full()[row_idx, 0]
-            # Compute gate fidelity: F = |Tr(U_ideal† U_subsystem)|² / 3²
-        trace_overlap = np.trace(U_ideal.conj().T @ U_subsys)
-        fidelity = np.abs(trace_overlap) ** 2 / 3**2
+        # print_matrix(U_subsys)
+        fidelity = qutip.process_fidelity(Qobj(U_subsys), Qobj(U_ideal))
         return fidelity
 
     def get_state_name(self, idx):
@@ -173,7 +172,6 @@ class Simulation:
             case self.state_d:
                 return 'd'
 
-
 def sigma_x_ij(i, j, d):
     ei = basis(d, i)
     ej = basis(d, j)
@@ -183,6 +181,15 @@ def sigma_y_ij(i, j, d):
     ei = basis(d, i)
     ej = basis(d, j)
     return -1j*ei*ej.dag() + 1j*ej*ei.dag()
+
+def roh(index, pos):
+    val = 1 if pos else -1
+    ax, ay, az  = 0,0,0
+    match index:
+        case 0: ax = val
+        case 1: ay = val
+        case 2: az = val
+    return Qobj(1/2 * np.array([[1+az, ax-ay*1j,0],[ax+1j*ay, 1-az, 0], [0,0,2]]))
 
 def compute_phi0(s, wd, amp, psi0): 
     rW = 2
@@ -202,27 +209,40 @@ def compute_phi0(s, wd, amp, psi0):
         # projections[idx] = c * np.conj(c) * qt.basis(simulator.sd, idx).proj()
     if psi0 == s.state_a:
         phi0 = qt.basis(s.sd, 0)
-    phi0 = phi0.unit()
+    if psi0 == s.state_b:
+      phi0 = qt.basis(s.sd, 1)
+    if psi0 == s.state_c:
+        phi0 = qt.basis(s.sd, 2)
+    # phi0 = phi0.unit()
     # print("phi0: ", phi0)
     return phi0, projections
 
-def compute_t_dependency(s, heff ,wd, tg):
+def find_optimal_gate_time(wd, amp, s, heff):
+    Omega_ab = heff[0, 1]
+    tg,_,_ = find_optimal_time(wd,amp,s.order,
+        s.state_b,s.state_a,s.state_c,s.E_array,s.V1_dressed_array, int(np.pi/(2*Omega_ab.real)),)
+    tlist = np.arange(0, tg, 0.01)
+    return tg, tlist
+
+def compute_t_dependency(s, heff, tg, use_drag = True, use_gauss = True):
     H = np.zeros((s.sd, s.sd), dtype=complex)
     # V = [None] * (int(scipy.special.binom(s.sd, 2))*2)
     Vx = [None] * (s.sd - 1)
     Vy = [None] * (s.sd - 1)
+    lambda1 = heff[0, 1]*2
     delta0 = heff[0][0]
     Delta = - 2* heff[1][1] + heff[2][2] + delta0
-    epsilon_x, epsilon_y = pulse_functions_gauss(tg, 1.0*Delta)
-    # epsilon_y = lambda t, args: 0
-    # epsilon_x = lambda t, args: 1 if t<tg else 0 
-    
+    epsilon_x, epsilon_y = pulse_functions_gauss(tg, 1.0*Delta, lambda1)
+    if not use_drag:
+        epsilon_y = lambda t,args=None: 0   
+    if not use_gauss:
+        epsilon_x = lambda t,args=None: lambda1 
     for i, _ in enumerate(s.resonances):
         # diagonal element
         delta = heff[i][i] - delta0
         H[i][i] = delta
         if i+1 == s.sd: continue
-        lambda_i = heff[i][i+1].real * 2
+        lambda_i = heff[i][i+1].real * 2 / lambda1
         coeff_img = heff[i][i+1].imag
         Vx[i] = [sigma_x_ij(i, i+1, s.sd) * lambda_i * 1/2, epsilon_x]
         Vy[i] = [sigma_y_ij(i, i+1, s.sd) * lambda_i * 1/2, epsilon_y]
@@ -237,18 +257,17 @@ def compute_t_dependency(s, heff ,wd, tg):
     return [Qobj(H), *Vx, *Vy]
     # return [Qobj(H), *Vx]
 
-def pulse_functions_gauss(tg, Delta):
+def pulse_functions_gauss(tg, Delta, lambda1):
     sigma = 1.0 * tg
     amp = tg * (np.sqrt(2*np.pi)*sigma*scipy.special.erf(tg/(2*np.sqrt(2)*sigma)) -
                 np.exp(-tg**2/(8*sigma**2)) * tg)**-1
     B = np.exp(-tg**2 / (8 * sigma**2)) * amp
-    epsilon_x = lambda t, args=None: max(0, amp * np.exp(-(t - tg / 2)**2 / (2 * sigma**2)) - B)
+    epsilon_x = lambda t, args=None: lambda1 * max(0, amp * np.exp(-(t - tg / 2)**2 / (2 * sigma**2)) - B)
     dt = 1e-6
     epsilon_y = lambda t, args=None: -(
         epsilon_x(t + dt) - epsilon_x(t - dt)
     ) / (2 * dt) * 1/Delta
     # epsilon_x = lambda t, args=None: 1 if t < tg else 0 
-    # epsilon_y = lambda t,args=None: 0
     return epsilon_x, epsilon_y
 
 def plot_pulse_functions(tgate, amp, tlist=None):
@@ -261,10 +280,47 @@ def plot_pulse_functions(tgate, amp, tlist=None):
     plt.figure(figsize=(8, 5))
     plt.plot(tlist, x_vals, label=r'$\epsilon_x$', linewidth=2)
     plt.plot(tlist, y_vals, label=r'$\epsilon_y$', linewidth=2)
-    plt.xlabel('Time (ns)')
-    plt.ylabel('Pulse amplitude')
-    plt.title('Pulse functions $\epsilon_x$ and $\epsilon_y$ vs. time')
+    plt.xlabel(r'Time (ns)')
+    plt.ylabel(r'Pulse amplitude')
+    plt.title(r'Pulse functions $\epsilon_x$ and $\epsilon_y$ vs. time')
     plt.grid(alpha=0.3)
     plt.legend()
     plt.tight_layout()
     plt.show()
+
+def print_matrix(A, d=3, th=1e-4):
+    f = lambda x: "0" if abs(x) < th else (f"{x:.{d}e}" if abs(x) < 10**(-d) or abs(x) >= 1e4 else f"{x:.{d}f}")
+    s = lambda z: (
+        f(z.real) if abs(z.imag) < th else
+        f"{f(z.imag)}j" if abs(z.real) < th else
+        f"{f(z.real)} {'+' if z.imag >= 0 else '-'} {f(abs(z.imag))}j"
+    )
+    rows = [[s(z) for z in row] for row in A]
+    w = [max(len(r[j]) for r in rows) for j in range(len(rows[0]))]
+    print('\n'.join('[ ' + '  '.join(x.rjust(wi) for x, wi in zip(r, w)) + ' ]' for r in rows))
+
+config = {
+    'initial_state': 'b',  # 'a' or 'b' for initial state selection
+    'amplitude': 0.2,  # in GHz
+    'detune': 0.002, # in GHz # 223 # 0.00389
+}
+if __name__ == "__main__":
+    s = Simulation()
+    amp = config['amplitude'] * 2 * np.pi
+    detune = config['detune'] * 2 * np.pi
+    # detune = 0
+    wd = s.find_resonance(amp) + detune
+
+    heff = s.heff(wd, amp)
+    tg, tlist = find_optimal_gate_time(wd, amp, s, heff)
+
+    Omega_ab = heff[0, 1]
+    tg,f_optimal,U_optimal = find_optimal_time(wd,amp,s.order,
+        s.state_b,s.state_a,s.state_c,s.E_array,s.V1_dressed_array, int(np.pi/(2*Omega_ab.real)),)
+    print("f_optimal: ", f_optimal)
+    print_matrix(U_optimal)
+
+    print("tg")
+    lh = compute_t_dependency(s, heff, tg, use_drag=True, use_gauss = True)
+    f = s.extract_fidelity(lh, tlist)
+    print(" simulated fidelity: ", (f*100),"%")

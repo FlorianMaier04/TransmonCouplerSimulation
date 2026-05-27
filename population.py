@@ -8,11 +8,11 @@ import matplotlib.pyplot as plt
 config = {
     'show_direct': False,
     'plot_epsilon': False,  # if True, plot epsilon_x and epsilon_y against t and exit
-    'initial_state': 'b',  # 'a' or 'b' for initial state selection
+    'initial_state': 'a',  # 'a' or 'b' for initial state selection
     'amplitude': 0.2,  # in GHz
-    'detune': 0.00389, # in GHz # 223
-    'pulse_shape': 'cos',  # 'cos', 'cossin', or 'gauss'
-    'pulse_args': [0.5],  # for gauss: [sigma_fraction]
+    'detune': 0.0, # in GHz # 223 # 0.00389 # 00145
+    'freq': 0.7102, 
+    'tgate': 119.951, # in ns
 }
 
 def simulate_direct(simulator, wd, amp, psi0, tlist):
@@ -24,58 +24,45 @@ def simulate_direct(simulator, wd, amp, psi0, tlist):
 
 def simulate_sambe(s, wd, amp, psi0):
     heff = (s.heff(wd, amp))
-    Omega_ab = heff[0][1]
+    display(heff)
     # find the optimal gate time
-    tg,_,_ = find_optimal_time(wd,amp,s.order,
-        s.state_b,s.state_a,s.state_c,s.E_array,s.V1_dressed_array, int(np.pi/(2*Omega_ab)),)
+    tg, tlist = find_optimal_gate_time(wd, amp, s, heff)
+    tg = config['tgate']
     tlist = np.arange(0, tg, 0.01)
     phi0, ops = compute_phi0(s, wd, amp, psi0)
-    
-    time_transformed_h = compute_t_dependency(s, heff, wd, tg)
-    n_steps = 50000
+    time_transformed_h = compute_t_dependency(s, heff, tg, use_drag=True, use_gauss=True)
     result = mesolve(
         time_transformed_h,
         phi0,
         tlist,
-        c_ops=[],
-        e_ops=ops,
-        options={'nsteps':n_steps,},
-    )
+        c_ops=[],e_ops=[],)
     return result, tlist
 
 def show_result(simulator, r, tlist, ax_normal, ax_log, sambe=True):
-    linestyle = 'dashed' if sambe else '-'
-
+    linestyle = 'dashed' if sambe else '-'  
     n_states = len(simulator.resonances)
-
-    # Basis-Farben für Theorie
     theory_colors = plt.cm.tab10(np.linspace(0, 1, n_states))
-
-    # Simulationsfarben: leicht verschoben in derselben Palette
     sim_colors = plt.cm.Set2(np.linspace(0, 1, n_states))
-
-    # Transparenz: Simulation blasser
     alpha = 1.0 if sambe else 0.4
     linewidth = 2.5 if sambe else 2
 
     colors = theory_colors if sambe else sim_colors
-
+    final_state = result.states[-1].full()
+    print("final_state: ", final_state)
     for i, state in enumerate(simulator.resonances):
         name = simulator.get_state_name(state).upper()
-
         label = f"State {name}"
         if sambe:
             label += " theo."
-
-        log_scale = max(r.expect[i]) < 3e-1
+        state_evolution = [result.states[idx_t].full()[i][0] for idx_t,_ in enumerate(tlist)]
+        propability_evolution = state_evolution * np.conj(state_evolution)
+        log_scale = max(propability_evolution) < 3e-1
         if log_scale:
             label += " (log.)"
-
         ax = ax_log if log_scale else ax_normal
-
         ax.plot(
             tlist,
-            r.expect[i],
+            propability_evolution,
             label=label,
             linewidth=linewidth,
             linestyle=linestyle,
@@ -90,7 +77,9 @@ if __name__ == "__main__":
 
     amp = config['amplitude'] * 2 * np.pi
     detune = config['detune'] * 2 * np.pi
+    detune = 0
     wd = simulator.find_resonance(amp) + detune
+    wd = config['freq'] * 2 * np.pi
     psi0 = None
     if config['initial_state']=='a':
         psi0 = simulator.state_a

@@ -13,8 +13,8 @@ config = {
     'wd_detune': 0.0001, # in GHz
     'base_amplitude': 0.1,
     'base_wd': 'res',
-    'plotA': True,
-    'plotF': False,
+    'plotA': False,
+    'plotF': True,
     'tgate': 200, # in nanoseconds
     'pulse_shape':'cos', # 'gauss', 'cos', 'cossin'
     'pulse_args': [0.5], # gauss: sigma=value*tg
