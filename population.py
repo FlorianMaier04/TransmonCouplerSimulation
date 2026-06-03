@@ -23,14 +23,15 @@ def simulate_direct(simulator, wd, amp, psi0, tlist):
     return result
 
 def simulate_sambe(s, wd, amp, psi0):
-    heff = (s.heff(wd, amp))
-    display(heff)
+    heff = (s.heff(wd, amp))#
+    print("heff")
+    display(Qobj(heff))
     # find the optimal gate time
     tg, tlist = find_optimal_gate_time(wd, amp, s, heff)
     tg = config['tgate']
     tlist = np.arange(0, tg, 0.01)
     phi0, ops = compute_phi0(s, wd, amp, psi0)
-    time_transformed_h = compute_t_dependency(s, heff, tg, use_drag=True, use_gauss=True)
+    time_transformed_h = compute_t_dependency(heff, tg)
     result = mesolve(
         time_transformed_h,
         phi0,

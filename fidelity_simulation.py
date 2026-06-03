@@ -24,32 +24,20 @@ if MODE == 1:
     }
 elif MODE == 2:
     config = {
-        'gate_time_range': np.linspace(100, 250, 10),  # Gate times in ns
+        'gate_time_range': np.linspace(800, 1000, 10),  # Gate times in ns
         'amplitude_range': np.linspace(0.05, 0.4, 10),  # Amplitudes in GHz
     }
 elif MODE == 3:
     config = {
         'amplitude_value': 0.2,  # Fixed amplitude in GHz
-        'gate_time_range': np.linspace(100, 130, 100),  # Gate times in ns
-        'frequency_range': np.linspace(0.708, 0.716, 100),  # Absolute drive frequencies in GHz
+        'gate_time_range': np.linspace(70, 250, 70),  # Gate times in ns
+        'frequency_range': np.linspace(0.704, 0.713, 10),  # Absolute drive frequencies in GHz
     }
 
 def get_fidelity(s, tg, wd, amp):
-    """
-    Calculate gate fidelity for given parameters.
-    
-    Parameters:
-    - simulator: Simulation instance
-    - tg: Gate time in ns
-    - wd: Drive frequency in rad/ns
-    - amp: Drive amplitude in rad/ns
-    
-    Returns:
-    - fidelity: Fidelity value
-    """
     heff = s.heff(wd, amp)            
     tlist = np.arange(0, tg, 0.01)
-    time_transformed_h = compute_t_dependency(s, heff, tg, use_drag=True, use_gauss=True)
+    time_transformed_h = compute_t_dependency(s, heff, tg)
     fidelity = s.extract_fidelity(time_transformed_h, tlist)
     
     return fidelity
@@ -203,10 +191,15 @@ def run_mode_3():
     gate_times = config['gate_time_range']
     freq_gHz = config['frequency_range']
     
+    # Calculate resonance frequency
+    wd_res = simulator.find_resonance(amp)
+    wd_res_gHz = wd_res / (2 * np.pi)
+    
     fidelity_map = np.zeros((len(freq_gHz), len(gate_times)))
     
     print(f"MODE 3: Sweeping {len(gate_times)} gate times × {len(freq_gHz)} frequencies")
-    print(f"Fixed amplitude: {amp_gHz} GHz\n")
+    print(f"Fixed amplitude: {amp_gHz} GHz")
+    print(f"Resonance frequency: {wd_res_gHz:.6f} GHz\n")
     
     for i, tg in enumerate(tqdm(gate_times, desc="Gate Time")):
         for j, freq_val in enumerate(freq_gHz):
@@ -233,6 +226,11 @@ def run_mode_3():
         extent=[gate_times[0], gate_times[-1], freq_gHz[0], freq_gHz[-1]],
         norm=plt.matplotlib.colors.LogNorm(vmin=vmin, vmax=vmax)
     )
+    
+    # Add resonance frequency line as additional information
+    ax.axhline(y=wd_res_gHz, color='red', linestyle='--', linewidth=2, 
+               label=f'Resonance: {wd_res_gHz:.6f} GHz', alpha=0.8)
+    ax.legend(loc='upper right', fontsize=10)
     
     ax.set_xlabel('Gate Time (ns)', fontsize=12)
     ax.set_ylabel('Drive Frequency (GHz)', fontsize=12)
