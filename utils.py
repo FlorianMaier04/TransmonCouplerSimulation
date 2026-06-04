@@ -127,6 +127,13 @@ class Simulation:
                 heff[idx_a,idx_b] = self.heff_element(state_a, state_b, wd, amp)
         return heff
     
+    # converts 0(a),1(b),2(c), index in the used indexing system
+    def get_associated_index(self, idx):
+        match idx:
+            case 0: return self.state_a
+            case 1: return self.state_b
+            case 2: return self.state_c
+
     def get_state_name(self, idx):
         match idx:
             case self.state_a:
@@ -164,13 +171,6 @@ def compute_phi0(s, wd, amp, psi0):
     # print("phi0: ", phi0)
     return phi0, projections
 
-def find_optimal_gate_time(wd, amp, s, heff):
-    Omega_ab = heff[0, 1]
-    tg,_,_ = find_optimal_time(wd,amp,s.order,
-        s.state_b,s.state_a,s.state_c,s.E_array,s.V1_dressed_array, int(np.pi/(2*Omega_ab.real)),)
-    tlist = np.arange(0, tg, 0.01)
-    return tg, tlist
-
 def h_target(Delta, lambda_param, tg, detune = 0):
     H = np.zeros((3, 3), dtype=complex)
     H[0][0] = 0
@@ -185,7 +185,8 @@ def h_target(Delta, lambda_param, tg, detune = 0):
         lambda_i = 1 if not i == 1 else lambda_param
         Vx[i] = [sigma_x_ij(i, i+1, 3) * lambda_i * 1/2, epsilonx]
         Vy[i] = [sigma_y_ij(i, i+1, 3) * lambda_i * 1/2, epsilony]
-    return [Qobj(H), [Qobj(delta1_mat), delta1], *Vx, *Vy], epsilonx, epsilony, delta1
+        args = epsilonx, epsilony, delta1
+    return [Qobj(H), [Qobj(delta1_mat), delta1], *Vx, *Vy], args
 
 def compute_t_dependency(heff, tg):
     lambda_param = heff[0][1] / heff[1][2]

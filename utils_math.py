@@ -27,39 +27,63 @@ def sigma_y_ij(i, j, d):
     ej = basis(d, j)
     return -1j*ei*ej.dag() + 1j*ej*ei.dag()
 
-def extract_fidelity(lh, tlist, sd = 3):
+def extract_fidelity(lh, tlist, sd=3, sim=None):
+    """
+    Extract fidelity for iSWAP-like gate.
+    
+    Parameters:
+    -----------
+    lh : list or Qobj
+        Hamiltonian for time evolution
+    tlist : array
+        Time list for evolution
+    sd : int
+        System dimension (default: 3)
+    sim : Simulation object, optional
+        If provided, uses full 27D Hilbert space with states from sim.state_a, sim.state_b, sim.state_c
+    
+    Returns:
+    --------
+    float : Process fidelity
+    """
     U_ideal = np.array([[0, 1j, 0], [1j, 0, 0], [0, 0, 1]], dtype=complex)
     U_subsys = np.zeros((sd, sd), dtype=complex)
-    for col_idx in range(0,sd): 
-        phi0 = basis(sd, col_idx)
-        result = mesolve(
-            lh,
-            phi0,
-            tlist,
-            e_ops=[],
-        )
-        final_state = result.states[-1]
-        # Extract subsystem components to form column of unitary
-        for row_idx in range(0,sd):
-            U_subsys[row_idx, col_idx] = final_state.full()[row_idx, 0]
-    # print_matrix(U_subsys)
+    
+    if sim is None:
+        # Original 3D implementation
+        for col_idx in range(0, sd): 
+            phi0 = basis(sd, col_idx)
+            result = mesolve(lh, phi0, tlist, e_ops=[])
+            final_state = result.states[-1]
+            for row_idx in range(0, sd):
+                U_subsys[row_idx, col_idx] = final_state.full()[row_idx, 0]
+    else:
+        # Full 27D implementation using state_a, state_b, state_c
+        state_indices = [sim.state_a, sim.state_b, sim.state_c]
+        initial_states = [sim.E_states[idx] for idx in state_indices]
+        
+        for col_idx, phi0_full in enumerate(initial_states):
+            result = mesolve(lh, phi0_full, tlist, e_ops=[])
+            final_state = result.states[-1]
+            
+            # Project onto the 3D subspace spanned by state_a, state_b, state_c
+            for row_idx, target_state_idx in enumerate(state_indices):
+                target_state = sim.E_states[target_state_idx]
+                amplitude = (target_state.dag() @ final_state).tr()
+                U_subsys[row_idx, col_idx] = amplitude
+    
     fidelity = qutip.process_fidelity(Qobj(U_subsys), Qobj(U_ideal))
     return fidelity
 
-def extract_pop_fid(lh, tlist, sd=3):
+def extract_pop_fid(lh, tlist, plot=False, sim=None):
     """
     Extract population fidelity by checking if population is exchanged for important initial states.
     For iSWAP-like behavior: |0⟩ ↔ |1⟩ (lowest two states)
     
     Parameters:
     -----------
-    lh : Qobj
-        Liouvillian or Hamiltonian for time evolution
-    tlist : array
-        Time list for evolution
-    sd : int
-        System dimension (default: 3 for qutrit system)
-    
+    sim : Simulation object, optional
+        If provided, uses full 27D Hilbert space with states from sim.state_a, sim.state_b, sim.state_c    
     Returns:
     --------
     dict : Contains population exchanges for each initial state
@@ -68,39 +92,46 @@ def extract_pop_fid(lh, tlist, sd=3):
         - 'pop_2_final': Population in state 2 for additional test case (if sd > 2)
         - 'iswap_fidelity': Average fidelity of population exchange
     """
-    
-    # Define initial states for the two important states and one additional test case
-    initial_states = {
-        'state_0': basis(sd, 0),  # |0⟩
-        'state_1': basis(sd, 1),  # |1⟩
-    }
-    
-    # Add additional test case state if system has more than 2 levels
-    if sd > 2:
-        initial_states['state_2'] = basis(sd, 2)  # |2⟩
-    
     results = {}
-    
-    for state_name, initial_state in initial_states.items():
-        # Run time evolution
-        result = mesolve(
-            lh,
-            initial_state,
-            tlist,
-            e_ops=[],
-        )
+    sd = 3
+    if sim is None:
+        # Original 3D implementation
+        initial_states = {
+            'state_0': basis(sd, 0),  # |0⟩
+            'state_1': basis(sd, 1),  # |1⟩
+            'state_2': basis(sd, 2)
+        }
         
-        final_state = result.states[-1]
-        final_state_vec = final_state.full().flatten()
+        items = initial_states.items() if not plot else tqdm(initial_states.items())
+        for state_name, initial_state in items:
+            result = mesolve(lh, initial_state, tlist, e_ops=[])
+            final_state = result.states[-1]
+            final_state_vec = final_state.full().flatten()
+            populations = np.abs(final_state_vec)**2
+            
+            results[f'initial_{state_name}'] = state_name
+            for i in range(min(sd, len(populations))):
+                results[f'pop_{i}_{state_name}'] = populations[i]
+    else:
+        # Full 27D implementation using state_a, state_b, state_c
+        state_indices = [sim.state_a, sim.state_b, sim.state_c]
+        state_names = ['state_a', 'state_b', 'state_c']
+        initial_states = {
+            state_names[i]: sim.E_states[idx] for i, idx in enumerate(state_indices)
+        }
         
-        # Calculate populations in computational basis
-        populations = np.abs(final_state_vec)**2
-        
-        results[f'initial_{state_name}'] = state_name
-        
-        # Store populations for all levels
-        for i in range(min(sd, len(populations))):
-            results[f'pop_{i}_{state_name}'] = populations[i]
+        items = initial_states.items() if not plot else tqdm(initial_states.items())
+        for state_name, initial_state_full in items:
+            result = mesolve(lh, initial_state_full, tlist, e_ops=[])
+            final_state = result.states[-1]
+            
+            # Project onto the 3D subspace spanned by state_a, state_b, state_c
+            results[f'initial_{state_name}'] = state_name
+            for i, target_state_idx in enumerate(state_indices):
+                target_state = sim.E_states[target_state_idx]
+                amplitude = (target_state.dag() @ final_state).tr()
+                population = np.abs(amplitude)**2
+                results[f'pop_{i}_{state_name}'] = population
     
     # Check iSWAP exchange conditions for the two lowest states
     pop_0_to_1 = results.get('pop_1_state_0', 0)  # Should be close to 1 for perfect iSWAP
@@ -121,54 +152,40 @@ def extract_pop_fid(lh, tlist, sd=3):
     
     return results
 
-def partial_derivative_heff_element(s, i, j, amp, wd, var='amp_real', h=1e-4):
-    """
-    Calculate partial derivative of heff element (i,j) with respect to amplitude or frequency.
-    Uses finite differences for numerical differentiation.
-    
-    Parameters:
-    -----------
-    s : Simulation object
-        The simulation object with heff(wd, amp) method
-    i, j : int
-        Row and column indices of the heff element
-    amp : complex
-        Current amplitude (complex value)
-    wd : float
-        Current angular frequency (real value)
-    var : str
-        Variable to differentiate with respect to:
-        - 'amp_real': real part of amplitude
-        - 'amp_imag': imaginary part of amplitude
-        - 'wd': angular frequency
-    h : float
-        Step size for finite differences (default: 1e-4)
-        
-    Returns:
-    --------
-    complex
-        Partial derivative d(heff[i,j])/dvar
-        
-    Example:
-    --------
-    >>> s = Simulation()
-    >>> amp = 0.2 * 2*np.pi
-    >>> wd = 0.71 * 2*np.pi
-    >>> d_amp_real = partial_derivative_heff_element(s, 0, 1, amp, wd, var='amp_real')
-    >>> d_wd = partial_derivative_heff_element(s, 1, 1, amp, wd, var='wd')
-    """
-    
-    if var == 'amp_real':
-        heff_plus = s.heff(wd, amp + h)
-        heff_minus = s.heff(wd, amp - h)
-    elif var == 'amp_imag':
-        heff_plus = s.heff(wd, amp + 1j*h)
-        heff_minus = s.heff(wd, amp - 1j*h)
-    elif var == 'wd':
-        heff_plus = s.heff(wd + h, amp)
-        heff_minus = s.heff(wd - h, amp)
-    else:
-        raise ValueError("var must be 'amp_real', 'amp_imag', or 'wd'")
-    
-    derivative = (heff_plus[i][j] - heff_minus[i][j]) / (2 * h)
-    return derivative
+
+# heff fitting
+
+import numpy as np
+
+def fit_heff_element(s, i, j,
+                     wd_range, amp_real_range, amp_imag_range,
+                     n_wd=100, n_amp_real=100, n_amp_imag=100):
+    si = s.get_associated_index(i)
+    sj = s.get_associated_index(j)
+    wd_vals = np.linspace(*wd_range, n_wd)
+    amp_real_vals = np.linspace(*amp_real_range, n_amp_real)
+    amp_imag_vals = np.linspace(*amp_imag_range, n_amp_imag)
+    X = []
+    Y = []
+    for wd in tqdm(wd_vals):
+        for amp_real in amp_real_vals:
+            for amp_imag in amp_imag_vals:
+                amp = amp_real + 1j * amp_imag
+                h = s.heff_element(si, sj, wd, amp)
+                X.append([
+                    1,
+                    wd,
+                    amp_real,
+                    amp_imag,
+                    wd**2,
+                    amp_real**2,
+                    amp_imag**2,
+                    wd*amp_real,
+                    wd*amp_imag,
+                    amp_real*amp_imag
+                ])
+                Y.append(h)
+    X = np.asarray(X)
+    Y = np.asarray(Y)
+    coeffs, *_ = np.linalg.lstsq(X, Y, rcond=None)
+    return coeffs
