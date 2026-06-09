@@ -5,21 +5,23 @@ from qutip import *
 import numpy as np
 import matplotlib.pyplot as plt
 
+
 config = {
-    'show_direct': False,
+    'show_direct': True,
     'plot_epsilon': False,  # if True, plot epsilon_x and epsilon_y against t and exit
     'initial_state': 'a',  # 'a' or 'b' for initial state selection
-    'amplitude': 0.2,  # in GHz
+    'amplitude': 0.23440161220302155,  # in GHz
     'detune': 0.0, # in GHz # 223 # 0.00389 # 00145
-    'freq': 0.7102, 
-    'tgate': 119.951, # in ns
+    'freq': 0.7061212073258497, 
+    'tgate': 200, # in ns
 }
 
 def simulate_direct(simulator, wd, amp, psi0, tlist):
     psi0_state = simulator.E_states[psi0]
-    ops = [simulator.E_states[state] @ simulator.E_states[state].dag() for state in simulator.resonances.keys()]
-    result = mesolve([simulator.H0_dressed, [simulator.V1_dressed, lambda t,args: amp*np.cos(wd*t)]], 
-                     psi0_state,tlist, c_ops=[], e_ops=ops)
+    cos_amp, cos_wd = compute_cos_params(simulator, config['tgate']) 
+    # ops = [simulator.E_states[state] @ simulator.E_states[state].dag() for state in simulator.resonances.keys()]
+    result = mesolve([simulator.H0_dressed, [simulator.V1_dressed, lambda t,args: cos_amp*np.cos(cos_wd*t)]], 
+                     psi0_state,tlist, c_ops=[], e_ops=[])
     return result
 
 def simulate_sambe(s, wd, amp, psi0):
@@ -27,7 +29,6 @@ def simulate_sambe(s, wd, amp, psi0):
     print("heff")
     display(Qobj(heff))
     # find the optimal gate time
-    tg, tlist = find_optimal_gate_time(wd, amp, s, heff)
     tg = config['tgate']
     tlist = np.arange(0, tg, 0.01)
     phi0, ops = compute_phi0(s, wd, amp, psi0)
@@ -39,7 +40,7 @@ def simulate_sambe(s, wd, amp, psi0):
         c_ops=[],e_ops=[],)
     return result, tlist
 
-def show_result(simulator, r, tlist, ax_normal, ax_log, sambe=True):
+def show_result(simulator, result, tlist, ax_normal, ax_log, sambe=True):
     linestyle = 'dashed' if sambe else '-'  
     n_states = len(simulator.resonances)
     theory_colors = plt.cm.tab10(np.linspace(0, 1, n_states))
@@ -55,15 +56,15 @@ def show_result(simulator, r, tlist, ax_normal, ax_log, sambe=True):
         label = f"State {name}"
         if sambe:
             label += " theo."
-        state_evolution = [result.states[idx_t].full()[i][0] for idx_t,_ in enumerate(tlist)]
-        propability_evolution = state_evolution * np.conj(state_evolution)
-        log_scale = max(propability_evolution) < 3e-1
+        pop = [abs(simulator.E_states[state].dag() * result.states[idx_t])**2 
+               for idx_t in range(len(result.states))]
+        log_scale = max(pop) < 3e-1
         if log_scale:
             label += " (log.)"
         ax = ax_log if log_scale else ax_normal
         ax.plot(
             tlist,
-            propability_evolution,
+            pop,
             label=label,
             linewidth=linewidth,
             linestyle=linestyle,
@@ -79,22 +80,19 @@ if __name__ == "__main__":
     amp = config['amplitude'] * 2 * np.pi
     detune = config['detune'] * 2 * np.pi
     detune = 0
-    wd = simulator.find_resonance(amp) + detune
     wd = config['freq'] * 2 * np.pi
     psi0 = None
     if config['initial_state']=='a':
         psi0 = simulator.state_a
     elif config['initial_state']=='b':
         psi0 = simulator.state_b
-    if config['plot_epsilon']:
-        plot_pulse_functions(100, amp, np.linspace(0, 100, 1000))
-        sys.exit(0)
 
-    result, tlist = simulate_sambe(simulator, wd, amp, psi0)
+    tlist = np.linspace(0, config['tgate'], 4000)
+    # result, tlist = simulate_sambe(simulator, wd, amp, psi0)
     if(config['show_direct']): 
         result_normal = simulate_direct(simulator, wd, amp, psi0, tlist)
         show_result(simulator, result_normal, tlist, ax, ax_log, sambe=False) 
-    show_result(simulator, result, tlist, ax, ax_log)
+    # show_result(simulator, result, tlist, ax, ax_log)
     # Create title with parameters
     title = f'Population Dynamics\n'
     title += f'Amplitude: {config["amplitude"]} GHz, '

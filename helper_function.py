@@ -377,4 +377,4 @@ def find_optimal_time(fre, amp, order, i, f, l, E0, V1, t_guess):
     t_max = tlist[np.argmax(fidelities)]
     U_max = lU[np.argmax(fidelities)]
 
-    return t_max, max_fidelity, U_max
+    return t_max, max_fidelity, U_max, fidelities, tlist
