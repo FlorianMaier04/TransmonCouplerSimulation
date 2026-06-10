@@ -81,9 +81,10 @@ class Simulation:
         # Resonant frequency
         self.res_freq_static = (self.sorted_evals[1, 0, 0] - self.sorted_evals[0, 0, 1]) / (2 * np.pi)
 
-    def resonant_condition(self, fre, amp, order, i, f, ):
+    def resonant_condition(self, fre, amp, order, i, f, use_c):
         fre = float(np.atleast_1d(fre)[0])
-        resonances = {self.state_a:0, self.state_b:1}
+        resonances = {self.state_a:0, self.state_b:1} if not use_c else {self.state_a:0, self.state_b:1, self.state_c:2} 
+        
         delta_i = Heff_Floquet_summed(self.order,i,i,
             fre,resonances,self.E_array,amp / 2 * self.V1_dressed_array,V0=None,analytics=False,)
         delta_f = Heff_Floquet_summed(order,f,f,
@@ -91,10 +92,10 @@ class Simulation:
         diff = delta_f - delta_i
         return float(np.real(diff))
 
-    def find_resonance(self, amp):
+    def find_resonance(self, amp, use_c = True):
         wd_initial_guess = self.res_freq_static * 2*np.pi
         resonant_wd_solution = fsolve(self.resonant_condition, wd_initial_guess, 
-            args=(amp, self.order, self.state_a, self.state_b,),)
+            args=(amp, self.order, self.state_a, self.state_b, use_c),)
         return resonant_wd_solution[0]
 
     def heff_element(self, i, j, wd, amp):
@@ -155,14 +156,14 @@ def compute_phi0(s, wd, amp, psi0):
     # print("phi0: ", phi0)
     return phi0, projections
 
-def h_target(Delta, rrr, tg, use_drag=True):
+def h_target(Delta, rrr, tg, use_drag=True, sigma_r=0.5):
     H = np.zeros((3, 3), dtype=complex)
     H[0][0] = 0
     H[1][1] = 0
     H[2][2] = Delta
     Vx = [None] * (2)
     Vy = [None] * (2)
-    epsilonx, epsilony, delta1 = pulse_functions_gauss(tg, Delta, rrr, use_drag = use_drag)
+    epsilonx, epsilony, delta1 = pulse_functions_gauss(tg, Delta, rrr, use_drag = use_drag, sigma_ratio=sigma_r)
     delta1_mat = [[0,0,0], [0,1,0], [0,0,0]]
     for i in range(0,2):
         lambda_i = 1 if not i == 1 else rrr
@@ -245,6 +246,6 @@ if __name__ == "__main__":
 
     lh = [s.H0_dressed, [s.V1_dressed, lambda t, args: cos_amp * np.cos(cos_wd * t)]]
     f_cos = extract_fidelity(lh, tlist_fid, sim=s)
-    fpop_cos = extract_pop_fid(lh, tlist_fid, sim=s, plot=True)
+    fpop_cos = extract_pop_fid(lh, tlist_fid, s=s, plot=True)
     # print("cos: ", fpop_cos)
     print(f"infidelity cos: {(1-f_cos):.2e} pop: {(1-fpop_cos['iswap_fidelity']):.2e}")
