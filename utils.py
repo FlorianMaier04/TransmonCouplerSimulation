@@ -171,6 +171,14 @@ def h_target(Delta, rrr, tg, use_drag=True, sigma_r=0.5):
         Vy[i] = [sigma_y_ij(i, i+1, 3) * lambda_i * 1/2, epsilony]
     args = epsilonx, epsilony, delta1
     return [Qobj(H), [Qobj(delta1_mat), delta1], *Vx, *Vy], args
+# define a function to change the list representation of h_target to one time dependant matrix function
+def sum_list(ht):
+    def f(t):
+        result = ht[0]
+        for i in range(1, len(ht)):
+            result = result + ht[i][0] * ht[i][1](t)
+        return result
+    return f
 
 def compute_t_dependency(heff, tg):
     lambda_param = heff[0][1] / heff[1][2]
