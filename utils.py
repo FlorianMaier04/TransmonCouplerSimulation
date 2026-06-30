@@ -66,6 +66,9 @@ class Simulation:
         self.sorted_evals, self.sorted_evecs = SortedFRFSpectrum(evals, evecs, self.dim_q1, self.dim_c, self.dim_q2)
         self.E_array = self.sorted_evals.reshape(self.d)
         self.E_states = self.sorted_evecs.reshape(self.d)
+        self.dressed_base_states = [basis(27, idx) for idx in range(0,27)]
+        self.H0 = H0 # be sure to use H0 when working in the normal basis
+        self.V1 = V1 # be sure to use V1 when working in the normal basis (not dressed)
         self.t_interaction_picture = Qobj(
             np.column_stack([
                 self.sorted_evecs[i, j, k].full()

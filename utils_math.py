@@ -122,16 +122,9 @@ def extract_pop_fid(lh, tlist, plot=False, debug=False, plot_c=False, s=None):
             pop_a[state_name] = np.array([np.abs(state_a_full.overlap(result.states[i]))**2 for i in range(len(tlist))])
             pop_b[state_name] = np.array([np.abs(state_b_full.overlap(result.states[i]))**2 for i in range(len(tlist))])
             pop_c[state_name] = np.array([np.abs(state_c_full.overlap(result.states[i]))**2 for i in range(len(tlist))])
-        
-        # Store final state populations
-        final_state_pop = np.abs(final_state.full().flatten())**2
-        for i in range(min(sd, len(final_state_pop))):
-            results[f'pop_{i}_{state_name}'] = final_state_pop[i]
-    
+            
     # Calculate iSWAP fidelity
-    pop_a_to_b = results.get('pop_1_state_a', 0)
-    pop_b_to_a = results.get('pop_0_state_b', 0)
-    results['iswap_fidelity'] = (pop_a_to_b + pop_b_to_a) / 2.0
+    results['iswap_fidelity'] = (pop_a['state_b'][-1] + pop_b['state_a'][-1]) / 2.0
     
     # Plot if requested
     if plot:
