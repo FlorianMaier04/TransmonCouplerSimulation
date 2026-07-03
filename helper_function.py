@@ -1,6 +1,8 @@
 import numpy as np
 import qutip as qt
 import sympy as sp
+from scipy.integrate import quad
+from tqdm import tqdm
 from sympy.physics.quantum import Dagger
 from sympy.physics.quantum.boson import BosonOp
 from sympy.physics.quantum.operatorordering import normal_ordered_form
@@ -300,6 +302,221 @@ def Psi_t_FloquetPerturb(rH, rW, wd, amp, resonances, E, V_posHarm, initial_stat
         )
     return psi_t, W_element
 
+def Psi_t_FloquetPerturb_dynamic(rH, rW, wd, amp, resonances,
+                                 E, V_posHarm, initial_state, tlist):
+    if isinstance(resonances, list):
+        # translate list into dictionary
+        resonances = {k:n for (k,n) in resonances}
+    D = len(E) # dimension
+    d_res = len(resonances) # subspace dimension
+    kref = min(resonances.keys()) # min k (0)
+    ind = {}
+    s = 0
+    for k in resonances:
+        ind[k] = s
+        s += 1
+
+    integral_beta = {}
+    integral_theta = np.zeros(d_res)
+    integral_gamma = np.zeros(d_res)
+    def update_phases(t,dt,wd,eps,u,uder,W):
+        for s in range(d_res):
+            integral_theta[s]+=eps[s]*dt
+            integral_gamma[s]+=np.imag(np.vdot(u[:,s],uder[:,s]))*dt
+
+        for r in range(rW+1):
+            for l in range(D):
+                for a in resonances:
+                    for p in W[r,l,a]:
+                        if p not in integral_beta:
+                            integral_beta[p]=0.0
+                        integral_beta[p]+=p*wd(t)*dt
+
+    psi = np.zeros((D, len(tlist)), dtype=complex)
+    lU = np.zeros((d_res,d_res,len(tlist)), dtype=complex)
+
+    dt = max(tlist)/len(tlist)
+    uprev = None
+    u0 = None
+
+    for it, t in tqdm(enumerate(tlist)):
+        Heff = Heff_Floquet_matrix_summed(
+            rH,
+            wd(t),
+            resonances,
+            E,
+            amp(t)/2 * V_posHarm,
+            analytics=False
+        )
+        W = W_Floquet_elements(
+            rW,
+            wd(t),
+            resonances,
+            E,
+            amp(t)/2 * V_posHarm,
+            analytics=False
+        )
+        eps, u = np.linalg.eigh(Heff)
+        if(it == 0): u0 = u.copy()
+        if uprev is None: uprev = u.copy()
+        # fixing the potential phase difference
+        for s in range(d_res):
+            overlap=np.vdot(uprev[:,s],u[:,s])
+            if np.abs(overlap)>0:
+                u[:,s]*=np.exp(-1j*np.angle(overlap))
+        uder =  (u-uprev) / dt
+        uprev = u.copy()
+        update_phases(t, dt, wd, eps, u, uder, W)
+
+        # test: berechne overlap der supposedly orthogonalen eigenzustände
+        # A = np.conj(u).T @ uder
+        # print("A01: ", np.abs(A)[0,1], " |eps0-eps1|: ", np.abs(eps[0]-eps[1]))
+        # print("A12: ", np.abs(A)[1,2], " |eps1-eps2|: ", np.abs(eps[1]-eps[2]))
+        # print("A02: ", np.abs(A)[0,2], " |eps0-eps2|: ", np.abs(eps[0]-eps[2]))
+        # print("")
+
+        # compute the propagator U
+        U=np.zeros((d_res,d_res),dtype=complex)
+        for s in range(d_res):
+            phase=np.exp(
+                1j*integral_gamma[s]
+                -1j*integral_theta[s]
+            )
+            U+=phase*np.outer(u[:,s],np.conj(u0[:,s]))
+        lU[:,:,it]=U
+
+        evol = np.zeros(D, dtype=complex)
+        for l in range(D):
+            for k in range(D):
+                for a in resonances:
+                    for b in resonances:
+                        for r1 in range(rW+1):
+                            for r2 in range(rW-r1+1):
+                                for s in range(d_res):
+                                    for p1,W1 in W[r1,l,a].items():
+                                        for p2,W2 in W[r2,k,b].items():
+                                            phase=np.exp(
+                                                1j*integral_gamma[s]
+                                                -1j*integral_theta[s]
+                                                -1j*E[kref]*t
+                                                -1j*integral_beta[p1])
+                                            evol[l] += (
+                                                phase
+                                                *W1
+                                                *u[ind[a],s] # transformation at t
+                                                *np.conj(u0[ind[b],s]) # transformation at t=0
+                                                *np.conj(W2)
+                                                *initial_state[k]
+                                            )
+        evol /= np.linalg.norm(evol)
+        psi[:, it] = evol
+
+    return psi, lU
+
+from scipy.linalg import expm
+
+def Psi_t_FloquetPerturb_dynamic2(rH,rW,wd,amp,resonances,
+                                 E,V_posHarm,initial_state,tlist):
+
+    if isinstance(resonances,list):
+        resonances={k:n for (k,n) in resonances}
+
+    D=len(E)
+    d_res=len(resonances)
+    kref=min(resonances.keys())
+
+    ind={}
+    for i,k in enumerate(resonances):
+        ind[k]=i
+    dt=tlist[1]-tlist[0]
+    integral_beta={}
+    psi=np.zeros((D,len(tlist)),dtype=complex)
+    lU = np.zeros((d_res,d_res,len(tlist)), dtype=complex)
+    U=np.eye(d_res,dtype=complex)
+    for it,t in tqdm(enumerate(tlist)):
+
+        Heff=Heff_Floquet_matrix_summed(
+            rH,
+            wd(t),
+            resonances,
+            E,
+            amp(t)/2*V_posHarm,
+            analytics=False
+        )
+
+        W=W_Floquet_elements(
+            rW,
+            wd(t),
+            resonances,
+            E,
+            amp(t)/2*V_posHarm,
+            analytics=False
+        )
+
+        if it>0:
+            U=expm(-1j*Heff*dt)@U
+        lU[:,:,it] = U
+        for r in range(rW+1):
+            for l in range(D):
+                for a in resonances:
+                    for p in W[r,l,a]:
+                        if p not in integral_beta:
+                            integral_beta[p]=0.0
+                        integral_beta[p]+=p*wd(t)*dt
+
+        evol=np.zeros(D,dtype=complex)
+        for l in range(D):
+            for k in range(D):
+                for a in resonances:
+                    for b in resonances:
+                        for r1 in range(rW+1):
+                            for r2 in range(rW-r1+1):
+                                for p1,W1 in W[r1,l,a].items():
+                                    for p2,W2 in W[r2,k,b].items():
+                                        phase=np.exp(
+                                            -1j*E[kref]*t
+                                            -1j*integral_beta[p1]
+                                        )
+                                        evol[l]+=(
+                                            phase
+                                            *W1
+                                            *U[ind[a],ind[b]]
+                                            *np.conj(W2)
+                                            *initial_state[k]
+                                        )
+
+        evol/=np.linalg.norm(evol)
+
+        psi[:,it]=evol
+
+    return psi,lU
+
+def unitary_evolution(tlist, wd, amp, E0, V1, a,b,c):
+    # Define initial states for subsystem basis {a,b,c}
+    initial_state_a = np.zeros(len(E0))
+    initial_state_a[a] = 1
+    initial_state_b = np.zeros(len(E0))
+    initial_state_b[b] = 1
+    initial_state_c = np.zeros(len(E0))
+    initial_state_c[c] = 1
+    initial_state_list = [initial_state_a, initial_state_b, initial_state_c]
+
+    # Storage for time-evolved unitaries
+    lU = np.zeros((len(tlist), 3, 3), dtype=complex)
+
+    # Evolve each basis state and construct unitary matrix
+    for j, initial_state in enumerate(initial_state_list):
+        psi_t, _ = Psi_t_FloquetPerturb_dynamic(
+            3, 1, wd, amp,
+            {a:0, b:1, c: 2},
+            E0, V1, initial_state, tlist,
+        )
+        # Extract subsystem components at each time
+        # psi_t[k, :] is the evolved state at time tlist[k]
+        lU[:, 0, j] = psi_t[a, :]  # Project onto state a
+        lU[:, 1, j] = psi_t[b, :]  # Project onto state b
+        lU[:, 2, j] = psi_t[c, :]  # Project onto state c
+    return lU
 
 
 def find_optimal_time(fre, amp, order, i, f, l, E0, V1, t_guess):

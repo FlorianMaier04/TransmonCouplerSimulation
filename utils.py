@@ -86,7 +86,7 @@ class Simulation:
 
     def resonant_condition(self, fre, amp, order, i, f, use_c):
         fre = float(np.atleast_1d(fre)[0])
-        resonances = {self.state_a:0, self.state_b:1} if not use_c else {self.state_a:0, self.state_b:1, self.state_c:2} 
+        resonances = {self.state_a:0, self.state_b:1} if not use_c else {self.state_a:0, self.state_b:1}
         
         delta_i = Heff_Floquet_summed(self.order,i,i,
             fre,resonances,self.E_array,amp / 2 * self.V1_dressed_array,V0=None,analytics=False,)

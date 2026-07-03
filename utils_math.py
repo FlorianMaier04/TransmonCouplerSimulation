@@ -73,6 +73,29 @@ def extract_fidelity(lh, tlist, sd=3, sim=None, plot=False, debug=False):
     fidelity = qutip.process_fidelity(Qobj(U_subsys), Qobj(U_ideal))
     return fidelity
 
+def resonant_subspace_column_evolution(lh, tlist, j, debug=False, s=None):
+    """Compute the time evolution of the j-th column of the resonant 3x3 subspace unitary."""
+    sd = 3
+    if j not in (0, 1, 2):
+        raise ValueError(f"Column index j must be 0, 1, or 2, got {j}.")
+
+    options = {"progress_bar": "tqdm"} if debug else None
+
+    if s is None:
+        resonant_states = [basis(sd, 0), basis(sd, 1), basis(sd, 2)]
+        initial_state = resonant_states[j]
+    else:
+        state_indices = [s.state_a, s.state_b, s.state_c]
+        resonant_states = [s.E_states[idx] for idx in state_indices]
+        initial_state = resonant_states[j]
+
+    result = mesolve(lh, initial_state, tlist, e_ops=[], options=options)
+    amplitudes = np.array([
+        [state.overlap(psi_t) for psi_t in result.states]
+        for state in resonant_states
+    ])
+    return amplitudes
+
 def extract_pop_fid(lh, tlist, plot=False, debug=False, plot_c=False, s=None):
     """
     Extract populations and fidelity from simulations.
@@ -85,48 +108,28 @@ def extract_pop_fid(lh, tlist, plot=False, debug=False, plot_c=False, s=None):
         Time list for evolution
     plot : bool
         Whether to plot populations over time
-    sim : Simulation object, optional
-        For 27D Hilbert space; if None uses 3D implementation
     debug : bool
         Whether to show progress bar
     plot_c : bool
         Whether to include state c population in plots (with log scale on secondary axis)
+    s : Simulation object, optional
+        For 27D Hilbert space; if None uses 3D implementation
     """
     results = {}
-    sd = 3
-    options = {"progress_bar": "tqdm"} if debug else None
     pop_a, pop_b, pop_c = {}, {}, {}
-    
-    # Define basis states
-    if s is None:
-        state_a, state_b, state_c = basis(sd, 0), basis(sd, 1), basis(sd, 2)
-        initial_states = [('state_a', state_a), ('state_b', state_b)]
-    else:
-        initial_states = [('state_a', s.state_a), ('state_b', s.state_b)]
-    
-    # Simulate each initial state
-    for state_name, initial_idx in initial_states:
-        initial_state = initial_idx if s is None else s.E_states[initial_idx]
-        result = mesolve(lh, initial_state, tlist, e_ops=[], options=options)
-        final_state = result.states[-1]
-        
-        # Calculate populations
-        if s is None:
-            pop_a[state_name] = np.array([np.abs(state_a.overlap(result.states[i]))**2 for i in range(len(tlist))])
-            pop_b[state_name] = np.array([np.abs(state_b.overlap(result.states[i]))**2 for i in range(len(tlist))])
-            pop_c[state_name] = np.array([np.abs(state_c.overlap(result.states[i]))**2 for i in range(len(tlist))])
-        else:
-            state_a_full = s.E_states[s.state_a]
-            state_b_full = s.E_states[s.state_b]
-            state_c_full = s.E_states[s.state_c]
-            pop_a[state_name] = np.array([np.abs(state_a_full.overlap(result.states[i]))**2 for i in range(len(tlist))])
-            pop_b[state_name] = np.array([np.abs(state_b_full.overlap(result.states[i]))**2 for i in range(len(tlist))])
-            pop_c[state_name] = np.array([np.abs(state_c_full.overlap(result.states[i]))**2 for i in range(len(tlist))])
-            
-    # Calculate iSWAP fidelity
+
+    amp_col_a = resonant_subspace_column_evolution(lh, tlist, 0, debug=debug, s=s)
+    amp_col_b = resonant_subspace_column_evolution(lh, tlist, 1, debug=debug, s=s)
+
+    pop_a['state_a'] = np.abs(amp_col_a[0])**2
+    pop_b['state_a'] = np.abs(amp_col_a[1])**2
+    pop_c['state_a'] = np.abs(amp_col_a[2])**2
+    pop_a['state_b'] = np.abs(amp_col_b[0])**2
+    pop_b['state_b'] = np.abs(amp_col_b[1])**2
+    pop_c['state_b'] = np.abs(amp_col_b[2])**2
+
     results['iswap_fidelity'] = (pop_a['state_b'][-1] + pop_b['state_a'][-1]) / 2.0
-    
-    # Plot if requested
+
     if plot:
         fig, axes = plt.subplots(1, 2, figsize=(14, 5))
         alpha_ab = 0.3 if plot_c else 1.0
@@ -150,7 +153,7 @@ def extract_pop_fid(lh, tlist, plot=False, debug=False, plot_c=False, s=None):
             ax.legend(lines, [l.get_label() for l in lines], loc='best')    
         plt.tight_layout()
         plt.show()
-    
+
     return results
 
 
@@ -194,6 +197,8 @@ def fit_heff_element(s, i, j, wd_range, amp_real_range, amp_imag_range,
     Y = np.asarray(Y)
     coeffs, *_ = np.linalg.lstsq(X, Y, rcond=None)
     return coeffs
+
+
 
 def print_matrix(A, d=3, th=1e-4):
     f = lambda x: "0" if abs(x) < th else (f"{x:.{d}e}" if abs(x) < 10**(-d) or abs(x) >= 1e4 else f"{x:.{d}f}")
