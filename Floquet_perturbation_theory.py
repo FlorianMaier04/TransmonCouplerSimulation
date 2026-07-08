@@ -21,6 +21,8 @@ from fractions import Fraction
 import os
 import warnings
 
+from tqdm import tqdm
+
 ## Folder containing the .txt files of DPT coefficients
 folder_DPT = os.path.join(os.path.dirname(__file__), 'DPT')
 
@@ -132,7 +134,7 @@ def Heff_Floquet(r, b, a, wd, resonances, E, V_posHarm, V0=None, ref_state=None,
     ## Track maximum perturbation ratio for validity check
     max_pert_ratio = 0 if not analytics else None
     max_pert_index = {'a':0, 'b':0, 'ptot':0, 'p':0} if not analytics else None
-    for p in itertools.product(*(np.arange(-nHarm, nHarm+1) for _ in range(r-1))):
+    for p in (itertools.product(*(np.arange(-nHarm, nHarm+1) for _ in range(r-1)))):
         ## Iterate through all possible combinations of harmonics such that p[0] + ... + p[r-1] = nb - na
         p = list(p)
         ## Add p[r-1] = nb - na - (p[0] + ... + p[r-2])
@@ -176,9 +178,6 @@ def Heff_Floquet(r, b, a, wd, resonances, E, V_posHarm, V0=None, ref_state=None,
                             if max_pert_ratio == pert_ratio:
                                 max_pert_index = {'a': k[j+1], 'b': k[j], 'ptot': ptot, 'p':p[j+1]} 
                     denominator = (E[a] + ptot*wd - E[k[j]])
-                    if(denominator==0):
-                        print("denominator 0")
-                        print("E[a]: ", E[a], " E[k[j]]: ", E[k[j]], " index: ", k[j] , " a_index: ", a)
                     contrib = contrib*V(p[j+1])[k[j+1], k[j]]/(E[a] + ptot*wd - E[k[j]])
                 if printProcesses and ( (analytics and contrib != 0) or (not analytics and not np.isclose(contrib, 0, atol=1e-12))):
                     nbProcesses += 1

@@ -31,7 +31,7 @@ def sigma_y_ij(i, j, d):
     ej = basis(d, j)
     return -1j*ei*ej.dag() + 1j*ej*ei.dag()
 
-def extract_fidelity(lh, tlist, sd=3, sim=None, plot=False, debug=False):
+def extract_fidelity(lh, tlist, sd=3, s=None, plot=False, debug=False):
     """
     lh : list or Qobj
         Hamiltonian for time evolution
@@ -45,7 +45,7 @@ def extract_fidelity(lh, tlist, sd=3, sim=None, plot=False, debug=False):
     U_ideal = np.array([[0, 1j, 0], [1j, 0, 0], [0, 0, 1]], dtype=complex)
     U_subsys = np.zeros((sd, sd), dtype=complex)
     options={"progress_bar": "tqdm"} if debug else None
-    if sim is None:
+    if s is None:
         # Original 3D implementation
         enum = range(0,sd) if not plot else tqdm(range(0,sd))
         for col_idx in enum: 
@@ -56,8 +56,8 @@ def extract_fidelity(lh, tlist, sd=3, sim=None, plot=False, debug=False):
                 U_subsys[row_idx, col_idx] = final_state.full()[row_idx, 0]
     else:
         # Full 27D implementation using state_a, state_b, state_c
-        state_indices = [sim.state_a, sim.state_b, sim.state_c]
-        initial_states = [sim.E_states[idx] for idx in state_indices]
+        state_indices = [s.state_a, s.state_b, s.state_c]
+        initial_states = [s.E_states[idx] for idx in state_indices]
         enum = enumerate(initial_states) if not plot else tqdm(enumerate(initial_states))
         for col_idx, phi0_full in enumerate(initial_states):
             result = mesolve(lh, phi0_full, tlist, e_ops=[], options=options)
@@ -65,7 +65,7 @@ def extract_fidelity(lh, tlist, sd=3, sim=None, plot=False, debug=False):
             
             # Project onto the 3D subspace spanned by state_a, state_b, state_c
             for row_idx, target_state_idx in enumerate(state_indices):
-                target_state = sim.E_states[target_state_idx]
+                target_state = s.E_states[target_state_idx]
                 amplitude = target_state.overlap(final_state)
                 U_subsys[row_idx, col_idx] = amplitude
     # print("U_subsys")
@@ -79,8 +79,7 @@ def resonant_subspace_column_evolution(lh, tlist, j, debug=False, s=None):
     if j not in (0, 1, 2):
         raise ValueError(f"Column index j must be 0, 1, or 2, got {j}.")
 
-    options = {"progress_bar": "tqdm"} if debug else None
-
+    options = {"progress_bar": "tqdm", "nsteps":100000} if debug else None
     if s is None:
         resonant_states = [basis(sd, 0), basis(sd, 1), basis(sd, 2)]
         initial_state = resonant_states[j]
@@ -131,7 +130,7 @@ def extract_pop_fid(lh, tlist, plot=False, debug=False, plot_c=False, s=None):
     results['iswap_fidelity'] = (pop_a['state_b'][-1] + pop_b['state_a'][-1]) / 2.0
 
     if plot:
-        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        fig, axes = plt.subplots(1, 2, figsize=(14, 4.5))
         alpha_ab = 0.3 if plot_c else 1.0
         for ax_idx, state_name in enumerate(['state_a', 'state_b']):
             ax = axes[ax_idx]
@@ -147,6 +146,7 @@ def extract_pop_fid(lh, tlist, plot=False, debug=False, plot_c=False, s=None):
                 ax2.semilogy(tlist, pop_c[state_name], f'g{c_style}', linewidth=2, label='Population in state c')
                 ax2.set_ylabel('Population in state c (log scale)', color='g')
                 ax2.tick_params(axis='y', labelcolor='g')
+                ax2.set_ylim([1e-20, 1e-2])
                 lines = ax.get_lines() + ax2.get_lines()
             else:
                 lines = ax.get_lines()

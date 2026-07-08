@@ -86,7 +86,7 @@ class Simulation:
 
     def resonant_condition(self, fre, amp, order, i, f, use_c):
         fre = float(np.atleast_1d(fre)[0])
-        resonances = {self.state_a:0, self.state_b:1} if not use_c else {self.state_a:0, self.state_b:1}
+        resonances = {self.state_a:0, self.state_b:1, self.state_c:2} if use_c else {self.state_a:0, self.state_b:1}
         
         delta_i = Heff_Floquet_summed(self.order,i,i,
             fre,resonances,self.E_array,amp / 2 * self.V1_dressed_array,V0=None,analytics=False,)
@@ -95,7 +95,7 @@ class Simulation:
         diff = delta_f - delta_i
         return float(np.real(diff))
 
-    def find_resonance(self, amp, use_c = True):
+    def find_resonance(self, amp, use_c = False):
         wd_initial_guess = self.res_freq_static * 2*np.pi
         resonant_wd_solution = fsolve(self.resonant_condition, wd_initial_guess, 
             args=(amp, self.order, self.state_a, self.state_b, use_c),)
@@ -232,12 +232,12 @@ def pulse_functions_gauss(tg, Delta, rrr, sigma_ratio=0.3, use_drag=True):
         delta1 = lambda t,args=None: 0
     return epsilonx, epsilony, delta1
 
-def compute_cos_params(s, tg):
+def compute_cos_params(s, tg, use_c=False):
     epsilonx = np.pi/(2*tg)
     amp_min, amp_max = 0.001, 1.5*2*np.pi
-    f = lambda A: np.abs(s.heff_element(s.state_a, s.state_b, s.find_resonance(A), A)) - epsilonx # epsilonx * 1 = Omega_ab
+    f = lambda A: np.abs(s.heff_element(s.state_a, s.state_b, s.find_resonance(A, use_c = use_c), A)) - epsilonx # epsilonx * 1 = Omega_ab
     sol = root_scalar(f, bracket=[amp_min, amp_max])
-    return sol.root, s.find_resonance(sol.root)
+    return sol.root, s.find_resonance(sol.root, use_c = use_c)
 
 if __name__ == "__main__":
     print("start")
@@ -256,7 +256,7 @@ if __name__ == "__main__":
     print("gate time: ", gate_time, " fidelity: ", fid)
 
     lh = [s.H0_dressed, [s.V1_dressed, lambda t, args: cos_amp * np.cos(cos_wd * t)]]
-    f_cos = extract_fidelity(lh, tlist_fid, sim=s)
+    f_cos = extract_fidelity(lh, tlist_fid, s=s)
     fpop_cos = extract_pop_fid(lh, tlist_fid, s=s, plot=True)
     # print("cos: ", fpop_cos)
     print(f"infidelity cos: {(1-f_cos):.2e} pop: {(1-fpop_cos['iswap_fidelity']):.2e}")
