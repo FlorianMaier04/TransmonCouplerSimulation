@@ -159,14 +159,23 @@ def compute_phi0(s, wd, amp, psi0):
     # print("phi0: ", phi0)
     return phi0, projections
 
-def h_target(Delta, rrr, tg, use_drag=True, sigma_r=0.5):
+def h_target(Delta, rrr, tg, use_drag=True, sigma_r=0.5, pulse='gauss'):
     H = np.zeros((3, 3), dtype=complex)
     H[0][0] = 0
     H[1][1] = 0
     H[2][2] = Delta
     Vx = [None] * (2)
     Vy = [None] * (2)
-    epsilonx, epsilony, delta1 = pulse_functions_gauss(tg, Delta, rrr, use_drag = use_drag, sigma_ratio=sigma_r)
+
+    epsilonx, epsilony, delta1 = [None]*3
+    match pulse:
+        case 'gauss':
+            epsilonx, epsilony, delta1 = pulse_functions_gauss(tg, Delta, rrr, 
+                                                               use_drag = use_drag, sigma_ratio=sigma_r)
+        case 'cos':
+            epsilonx, epsilony, delta1 = pulse_functions_cos(tg, Delta, rrr)
+        case 'tanh':
+            epsilonx, epsilony, delta1 = pulse_functions_tanh(tg, Delta, rrr, sigma_r*tg)
     delta1_mat = [[0,0,0], [0,1,0], [0,0,0]]
     for i in range(0,2):
         lambda_i = 1 if not i == 1 else rrr
@@ -188,6 +197,70 @@ def compute_t_dependency(heff, tg):
     Delta = -(heff[0][0] - heff[1][1])/2
     detune = heff[0][0] - heff[1][1]
     return h_target(Delta, lambda_param, tg, delta_a = heff[2][2], delta_c = heff[0][0], detune = detune)
+
+def pulse_functions_cos(tg, Delta, rrr):
+    ep_pi = np.pi / tg
+    delta1 = lambda t, args=None: ((rrr**2-4) * ep_pi**2/(4*Delta) -
+            (rrr**4 - 7*rrr**2 + 12)*ep_pi**4 / (16*Delta**3))
+    epsilonx = lambda t, args=None: (ep_pi + 
+                        (rrr**2 - 4)*ep_pi**3 / (8*Delta**2) - 
+                        (13*rrr**4 - 76*rrr**2 + 112)*ep_pi**5/(128*Delta**4))
+    epsilony = lambda t, args=None: 0
+    return epsilonx, epsilony, delta1
+
+import numpy as np
+from scipy.integrate import quad
+from scipy.optimize import root_scalar
+
+
+def pulse_functions_tanh(tg, Delta, rrr, sigma):
+    envelope = lambda t: (np.tanh(t / sigma) * np.tanh((tg - t) / sigma))
+    ep_pi_s = lambda t, A: A * envelope(t)
+    delta1_s = lambda t, A: (
+        (rrr**2 - 4) * ep_pi_s(t, A)**2 / (4 * Delta)
+        - (rrr**4 - 7 * rrr**2 + 12)
+        * ep_pi_s(t, A)**4 / (16 * Delta**3)
+    )
+    def pulse_area(A):
+        f = lambda t: ep_pi_s(t, A)
+        I, _ = quad(f, 0, tg)
+        return I
+    f = lambda A: pulse_area(A) - np.pi
+    sol = root_scalar(
+        f,
+        bracket=[0, 5],
+        method="brentq"
+    )
+    A = sol.root
+
+    ep_pi = lambda t, args=None: ep_pi_s(t, A)
+    delta1 = lambda t, args=None: delta1_s(t, A)
+    def ep_pi_tder(t, args=None):
+        x = t / sigma
+        y = (tg - t) / sigma
+        sech2_x = 1 / np.cosh(x)**2
+        sech2_y = 1 / np.cosh(y)**2
+        return (
+            A / sigma *
+            (
+                sech2_x * np.tanh(y)
+                - np.tanh(x) * sech2_y
+            )
+        )
+    epsilonx = lambda t, args=None: (
+        ep_pi(t)
+        + (rrr**2 - 4) * ep_pi(t)**3 / (8 * Delta**2)
+        - (13 * rrr**4 - 76 * rrr**2 + 112)
+        * ep_pi(t)**5 / (128 * Delta**4)
+    )
+    epsilony = lambda t, args=None: (
+        -ep_pi_tder(t) / Delta
+        + 33 * (rrr**2 - 2)
+        * ep_pi(t)**2
+        * ep_pi_tder(t)
+        / (24 * Delta**3)
+    )
+    return epsilonx, epsilony, delta1
 
 def pulse_functions_gauss(tg, Delta, rrr, sigma_ratio=0.3, use_drag=True):
     sigma = tg * sigma_ratio
