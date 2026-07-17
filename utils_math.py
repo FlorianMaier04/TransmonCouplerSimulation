@@ -7,20 +7,6 @@ from helper_function import *
 from Floquet_perturbation_theory import * 
 from scipy.optimize import root_scalar
 
-def fourier_coeffs(f, wd, N=100, M=10000):
-    T = 2*np.pi / wd
-    t = np.linspace(0, T, M, endpoint=False)
-    dt = t[1] - t[0]
-    ft = f(t)  # shape: (M, D, D)
-    coeffs = []
-    for n in range(0, N):
-        # Berechne V_n = (1/T) * integral_0^T V(t) * exp(-i*n*wd*t) dt
-        exp_term = np.exp(-1j*n*wd*t)  # shape: (M,)
-        integrand = ft * exp_term[:, None, None]  # shape: (M, D, D)
-        coeff = (1/T) * np.sum(integrand, axis=0) * dt  # shape: (D, D)
-        coeffs.append(coeff.real) # we only insert real pulse shapes
-    return np.array(coeffs)
-
 def sigma_x_ij(i, j, d):
     ei = basis(d, i)
     ej = basis(d, j)
@@ -95,7 +81,7 @@ def resonant_subspace_column_evolution(lh, tlist, j, debug=False, s=None):
     ])
     return amplitudes
 
-def extract_pop_fid(lh, tlist, plot=False, debug=False, plot_c=False, s=None):
+def extract_pop_fid(lh, tlist, plot=False, debug=False, plot_c=False, s=None, cut=False):
     """
     Extract populations and fidelity from simulations.
     
@@ -118,21 +104,24 @@ def extract_pop_fid(lh, tlist, plot=False, debug=False, plot_c=False, s=None):
     pop_a, pop_b, pop_c = {}, {}, {}
 
     amp_col_a = resonant_subspace_column_evolution(lh, tlist, 0, debug=debug, s=s)
-    amp_col_b = resonant_subspace_column_evolution(lh, tlist, 1, debug=debug, s=s)
-
     pop_a['state_a'] = np.abs(amp_col_a[0])**2
     pop_b['state_a'] = np.abs(amp_col_a[1])**2
     pop_c['state_a'] = np.abs(amp_col_a[2])**2
-    pop_a['state_b'] = np.abs(amp_col_b[0])**2
-    pop_b['state_b'] = np.abs(amp_col_b[1])**2
-    pop_c['state_b'] = np.abs(amp_col_b[2])**2
+    if not cut:
+        amp_col_b = resonant_subspace_column_evolution(lh, tlist, 1, debug=debug, s=s)
+        pop_a['state_b'] = np.abs(amp_col_b[0])**2
+        pop_b['state_b'] = np.abs(amp_col_b[1])**2
+        pop_c['state_b'] = np.abs(amp_col_b[2])**2
 
-    results['iswap_fidelity'] = (pop_a['state_b'][-1] + pop_b['state_a'][-1]) / 2.0
+    if not cut:
+        results['iswap_fidelity'] = (pop_a['state_b'][-1] + pop_b['state_a'][-1]) / 2.0
 
     if plot:
         fig, axes = plt.subplots(1, 2, figsize=(14, 4.5))
         alpha_ab = 0.3 if plot_c else 1.0
         for ax_idx, state_name in enumerate(['state_a', 'state_b']):
+            if cut and ax_idx==1:
+                continue
             ax = axes[ax_idx]
             ax.grid(True, alpha=0.3)
             ax.plot(tlist, pop_a[state_name], 'b-', linewidth=2, alpha=alpha_ab, label='Population in state a')

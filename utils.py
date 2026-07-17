@@ -101,18 +101,18 @@ class Simulation:
             args=(amp, self.order, self.state_a, self.state_b, use_c),)
         return resonant_wd_solution[0]
 
-    def heff_element(self, i, j, wd, amp):
+    def heff_element(self, i, j, wd, amp, dwd=0, t=0):
         V_posharm = (amp/2) * self.V1_dressed_array
         V0 = None
-        element = Heff_Floquet_summed(self.order, i, j, wd, self.resonances, self.E_array, V_posHarm=V_posharm, V0=V0)
+        element = Heff_Floquet_summed(self.order, i, j, wd, self.resonances, self.E_array, V_posHarm=V_posharm, V0=V0, dwd=dwd, t=t)
         return element
 
-    def heff(self, wd, amp):
+    def heff(self, wd, amp, dwd=0, t=0):
         heff = np.zeros((self.sd, self.sd), dtype=complex)
         states = [*self.resonances.keys()]
         for idx_a, state_a in enumerate(states):
             for idx_b, state_b in enumerate(states):
-                heff[idx_a,idx_b] = self.heff_element(state_a, state_b, wd, amp)
+                heff[idx_a,idx_b] = self.heff_element(state_a, state_b, wd, amp, dwd=dwd, t=t)
         return heff
     
     # converts 0(a),1(b),2(c), index in the used indexing system

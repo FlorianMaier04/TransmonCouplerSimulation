@@ -305,13 +305,14 @@ def Psi_t_FloquetPerturb(rH, rW, wd, amp, resonances, E, V_posHarm, initial_stat
 def _compute_floquet_step(it, t, dt, rH, rW, signal, resonances,
                           E, V_posHarm, initial_state, D, d_res, ind,
                           kref, integral_beta, integral_theta,
-                          integral_gamma, uprev, u0, U, W0, num=False):
+                          integral_gamma, uprev, u0, U, W0, num=False, dwd=None):
     wd, amp = signal(t)
+    wd_der = dwd(t) if not dwd is None else 0
     Heff = Heff_Floquet_matrix_summed(
-        rH, wd, resonances, E, amp / 2 * V_posHarm, analytics=False
+        rH, wd, resonances, E, amp / 2 * V_posHarm, analytics=False, dwd=wd_der, t=t
     )
     W = W_Floquet_elements(
-        rW, wd, resonances, E, amp / 2 * V_posHarm, analytics=False
+        rW, wd, resonances, E, amp / 2 * V_posHarm, analytics=False, dwd=wd_der, t=0
     )
     eps, u = np.linalg.eigh(Heff)
     if it == 0:
@@ -374,7 +375,7 @@ def _compute_floquet_step(it, t, dt, rH, rW, signal, resonances,
 
 
 def Psi_t_FloquetPerturb_dynamic(rH, rW, signal, resonances,
-                                 E, V_posHarm, initial_state, tlist, num=False):
+                                 E, V_posHarm, initial_state, tlist, num=False, dwd=None):
     if isinstance(resonances, list):
         # translate list into dictionary
         resonances = {k:n for (k,n) in resonances}
@@ -405,7 +406,7 @@ def Psi_t_FloquetPerturb_dynamic(rH, rW, signal, resonances,
         evol, U, uprev, u0, integral_beta, integral_theta, integral_gamma = _compute_floquet_step(
             it, t, dt, rH, rW, signal, resonances, E, V_posHarm,
             initial_state, D, d_res, ind, kref, integral_beta,
-            integral_theta, integral_gamma, uprev, u0, U, W0, num
+            integral_theta, integral_gamma, uprev, u0, U, W0, num=num, dwd=dwd
         )
         lU[:,:,it]=U
         psi[:, it] = evol
