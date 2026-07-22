@@ -1,4 +1,5 @@
 import numpy as np
+import sympy as sp
 from qutip import *
 from Floquet_perturbation_theory import *
 from helper_function import *
@@ -89,9 +90,9 @@ class Simulation:
         resonances = {self.state_a:0, self.state_b:1, self.state_c:2} if use_c else {self.state_a:0, self.state_b:1}
         
         delta_i = Heff_Floquet_summed(self.order,i,i,
-            fre,resonances,self.E_array,amp / 2 * self.V1_dressed_array,V0=None,analytics=False,)
+            fre, amp, resonances,self.E_array,amp / 2 * self.V1_dressed_array,V0=None,analytics=False,)
         delta_f = Heff_Floquet_summed(order,f,f,
-            fre,resonances,self.E_array,amp / 2 * self.V1_dressed_array,V0=None,analytics=False,)
+            fre, amp, resonances,self.E_array,amp / 2 * self.V1_dressed_array,V0=None,analytics=False,)
         diff = delta_f - delta_i
         return float(np.real(diff))
 
@@ -101,235 +102,124 @@ class Simulation:
             args=(amp, self.order, self.state_a, self.state_b, use_c),)
         return resonant_wd_solution[0]
 
-    def heff_element(self, i, j, wd, amp, dwd=0, t=0):
+    def heff_element(self, i, j, wd, amp, dwd=0, da=0, t=0):
         V_posharm = (amp/2) * self.V1_dressed_array
         V0 = None
-        element = Heff_Floquet_summed(self.order, i, j, wd, self.resonances, self.E_array, V_posHarm=V_posharm, V0=V0, dwd=dwd, t=t)
+        element = Heff_Floquet_summed(self.order, i, j, wd, amp, self.resonances, self.E_array, V_posharm, V0=V0, dwd=dwd, da=da, t=t)
         return element
 
-    def heff(self, wd, amp, dwd=0, t=0):
+    def heff(self, wd, amp, dwd=0, da=0, t=0):
         heff = np.zeros((self.sd, self.sd), dtype=complex)
         states = [*self.resonances.keys()]
         for idx_a, state_a in enumerate(states):
             for idx_b, state_b in enumerate(states):
-                heff[idx_a,idx_b] = self.heff_element(state_a, state_b, wd, amp, dwd=dwd, t=t)
+                heff[idx_a,idx_b] = self.heff_element(state_a, state_b, wd, amp, dwd=dwd, da=da, t=t)
         return heff
     
-    # converts 0(a),1(b),2(c), index in the used indexing system
-    def get_associated_index(self, idx):
-        match idx:
-            case 0: return self.state_a
-            case 1: return self.state_b
-            case 2: return self.state_c
-
-    def get_state_name(self, idx):
-        match idx:
-            case self.state_a:
-                return 'a'
-            case self.state_b:
-                return 'b'
-            case self.state_c:
-                return 'c'
-            case self.state_d:
-                return 'd'
-
-def compute_phi0(s, wd, amp, psi0): 
-    rW = 2
-    W = W_Floquet_elements(rW, wd, s.resonances, s.E_array, amp/2 * s.V1_dressed_array,
-                        None, ref_state = None, analytics = False)
-    # express phi0 in the resonant subspace, assuming psi0 is no superposition and lies in the res. subspace
-    phi0 = qt.zero_ket(s.sd)
-    projections = [None] * s.sd
-    for idx, a in enumerate(s.resonances.keys()):
-        dic = W[rW, psi0, a]
-        n_psi0 = s.resonances[psi0]
-        if n_psi0 in dic: c = np.conj(dic[n_psi0])
-        else: c = 0
-        # if(c!=0): print("idx: ", a, " c: ", c, " richtiger idx: ", idx)
-        phi0 += c * qt.basis(s.sd, idx)
-        projections[idx] = qt.basis(s.sd, idx).proj()
-        # projections[idx] = c * np.conj(c) * qt.basis(simulator.sd, idx).proj()
-    if psi0 == s.state_a:
-        phi0 = qt.basis(s.sd, 0)
-    if psi0 == s.state_b:
-      phi0 = qt.basis(s.sd, 1)
-    if psi0 == s.state_c:
-        phi0 = qt.basis(s.sd, 2)
-    # phi0 = phi0.unit()
-    # print("phi0: ", phi0)
-    return phi0, projections
-
-def h_target(Delta, rrr, tg, use_drag=True, sigma_r=0.5, pulse='gauss'):
-    H = np.zeros((3, 3), dtype=complex)
-    H[0][0] = 0
-    H[1][1] = 0
-    H[2][2] = Delta
-    Vx = [None] * (2)
-    Vy = [None] * (2)
-
-    epsilonx, epsilony, delta1 = [None]*3
-    match pulse:
-        case 'gauss':
-            epsilonx, epsilony, delta1 = pulse_functions_gauss(tg, Delta, rrr, 
-                                                               use_drag = use_drag, sigma_ratio=sigma_r)
-        case 'cos':
-            epsilonx, epsilony, delta1 = pulse_functions_cos(tg, Delta, rrr)
-        case 'tanh':
-            epsilonx, epsilony, delta1 = pulse_functions_tanh(tg, Delta, rrr, sigma_r*tg)
-    delta1_mat = [[0,0,0], [0,1,0], [0,0,0]]
-    for i in range(0,2):
-        lambda_i = 1 if not i == 1 else rrr
-        Vx[i] = [sigma_x_ij(i, i+1, 3) * lambda_i * 1/2, epsilonx]
-        Vy[i] = [sigma_y_ij(i, i+1, 3) * lambda_i * 1/2, epsilony]
-    args = epsilonx, epsilony, delta1
-    return [Qobj(H), [Qobj(delta1_mat), delta1], *Vx, *Vy], args
-# define a function to change the list representation of h_target to one time dependant matrix function
-def sum_list(ht):
-    def f(t):
-        result = ht[0]
-        for i in range(1, len(ht)):
-            result = result + ht[i][0] * ht[i][1](t)
-        return result
-    return f
-
-def compute_t_dependency(heff, tg):
-    lambda_param = heff[0][1] / heff[1][2]
-    Delta = -(heff[0][0] - heff[1][1])/2
-    detune = heff[0][0] - heff[1][1]
-    return h_target(Delta, lambda_param, tg, delta_a = heff[2][2], delta_c = heff[0][0], detune = detune)
-
-def pulse_functions_cos(tg, Delta, rrr):
-    ep_pi = np.pi / tg
-    delta1 = lambda t, args=None: ((rrr**2-4) * ep_pi**2/(4*Delta) -
-            (rrr**4 - 7*rrr**2 + 12)*ep_pi**4 / (16*Delta**3))
-    epsilonx = lambda t, args=None: (ep_pi + 
-                        (rrr**2 - 4)*ep_pi**3 / (8*Delta**2) - 
-                        (13*rrr**4 - 76*rrr**2 + 112)*ep_pi**5/(128*Delta**4))
-    epsilony = lambda t, args=None: 0
-    return epsilonx, epsilony, delta1
-
-import numpy as np
-from scipy.integrate import quad
-from scipy.optimize import root_scalar
+def _is_symbolic(value):
+    return isinstance(value, sp.Basic)
 
 
-def pulse_functions_tanh(tg, Delta, rrr, sigma):
-    envelope = lambda t: (np.tanh(t / sigma) * np.tanh((tg - t) / sigma))
-    ep_pi_s = lambda t, A: A * envelope(t)
-    delta1_s = lambda t, A: (
-        (rrr**2 - 4) * ep_pi_s(t, A)**2 / (4 * Delta)
-        - (rrr**4 - 7 * rrr**2 + 12)
-        * ep_pi_s(t, A)**4 / (16 * Delta**3)
-    )
-    def pulse_area(A):
-        f = lambda t: ep_pi_s(t, A)
-        I, _ = quad(f, 0, tg)
-        return I
-    f = lambda A: pulse_area(A) - np.pi
-    sol = root_scalar(
-        f,
-        bracket=[0, 5],
-        method="brentq"
-    )
-    A = sol.root
+def _sigma_op(i, j, d, kind='x', symbolic=False):
+    if symbolic:
+        op = sp.zeros(d, d)
+        if kind == 'x':
+            op[i, j] = 1
+            op[j, i] = 1
+        else:
+            op[i, j] = -sp.I
+            op[j, i] = sp.I
+        return op
+    return sigma_x_ij(i, j, d) if kind == 'x' else sigma_y_ij(i, j, d)
 
-    ep_pi = lambda t, args=None: ep_pi_s(t, A)
-    delta1 = lambda t, args=None: delta1_s(t, A)
+def h_target(Delta, rrr, tg, sigma_r, pulse='gauss'):
+    symbolic = any(_is_symbolic(v) for v in (Delta, rrr, tg, sigma_r))
+    if symbolic:
+        return h_target_symbolic(Delta, rrr, tg, sigma_r, pulse)
+    return h_target_numeric(Delta, rrr, tg, sigma_r, pulse)
+
+def h_target_symbolic(Delta, rrr, tg, sigma_r, pulse='gauss'):
+    t = sp.Symbol('t')
+    H = sp.diag(0, 0, Delta)
+    delta1_mat = sp.diag(0, 1, 0)
+    epsilonx, epsilony, delta1 = pulse_functions(tg, Delta, rrr, sigma_r, pulse)
+
+    H_total = H + delta1_mat * delta1(t)
+
+    for i in range(2):
+        lambda_i = 1 if i == 0 else rrr
+        H_total += _sigma_op(i, i + 1, 3, symbolic=True) * lambda_i * sp.Rational(1, 2) * epsilonx(t)
+        H_total += _sigma_op(i, i + 1, 3, kind='y', symbolic=True) * lambda_i * sp.Rational(1, 2) * epsilony(t)
+
+    return H_total, (epsilonx(t), epsilony(t), delta1(t))
+
+def h_target_numeric(Delta, rrr, tg, sigma_r, pulse='gauss'):
+
+    H = Qobj(np.diag([0, 0, Delta]))
+    delta1_mat = Qobj(np.diag([0, 1, 0]))
+    epsilonx, epsilony, delta1 = pulse_functions(tg, Delta, rrr, sigma_r, pulse)
+
+    Vx, Vy = [], []
+
+    for i in range(2):
+        lambda_i = 1 if i == 0 else rrr
+        Vx.append([Qobj(_sigma_op(i, i + 1, 3, symbolic=False)) * lambda_i / 2, epsilonx])
+        Vy.append([Qobj(_sigma_op(i, i + 1, 3, kind='y', symbolic=False)) * lambda_i / 2, epsilony])
+
+    return [H, [delta1_mat, delta1], *Vx, *Vy], (epsilonx, epsilony, delta1)
+
+def pulse_functions(tg, Delta, rrr, sigma_r=0.3, pulse='gauss'):
+
+    symbolic = any(_is_symbolic(v) for v in (tg, Delta, rrr, sigma_r))
+    sigma = sigma_r * tg
+    t = sp.Symbol('t') if symbolic else None
+    xp = sp if symbolic else np
+    pi = sp.pi if symbolic else np.pi
+
+    if pulse == 'gauss':
+        B_ratio = xp.exp(-tg**2 / (8 * sigma**2))
+        def pulse_shape(t, A):
+            return A * (xp.exp(-(t - tg / 2)**2 / (2 * sigma**2)) - B_ratio)
+        def pulse_derivative(t, A):
+            return -A * (t - tg / 2) * xp.exp(-(t - tg / 2)**2 / (2 * sigma**2)) / sigma**2
+    elif pulse == 'tanh':
+        def pulse_shape(t, A):
+            return A * xp.tanh(t / sigma) * xp.tanh((tg - t) / sigma)
+        def pulse_derivative(t, A):
+            x, y = t / sigma, (tg - t) / sigma
+            return A / sigma * (xp.tanh(y) / xp.cosh(x)**2 - xp.tanh(x) / xp.cosh(y)**2)
+    else:
+        raise ValueError(f"Unsupported pulse '{pulse}'. Use 'gauss' or 'tanh'.")
+
+    if symbolic:
+        t_prime = sp.symbols("t^{\\prime}")
+        A = pi / sp.Integral(pulse_shape(t_prime, 1), (t_prime, 0, tg))
+    else:
+        A = root_scalar(lambda A: quad(lambda t: pulse_shape(t, A), 0, tg)[0] - pi, bracket=[0, 5], method='brentq').root
+
+    def ep_pi(t, args=None):
+        return pulse_shape(t, A)
+
     def ep_pi_tder(t, args=None):
-        x = t / sigma
-        y = (tg - t) / sigma
-        sech2_x = 1 / np.cosh(x)**2
-        sech2_y = 1 / np.cosh(y)**2
-        return (
-            A / sigma *
-            (
-                sech2_x * np.tanh(y)
-                - np.tanh(x) * sech2_y
-            )
-        )
-    epsilonx = lambda t, args=None: (
-        ep_pi(t)
-        + (rrr**2 - 4) * ep_pi(t)**3 / (8 * Delta**2)
-        - (13 * rrr**4 - 76 * rrr**2 + 112)
-        * ep_pi(t)**5 / (128 * Delta**4)
-    )
-    epsilony = lambda t, args=None: (
-        -ep_pi_tder(t) / Delta
-        + 33 * (rrr**2 - 2)
-        * ep_pi(t)**2
-        * ep_pi_tder(t)
-        / (24 * Delta**3)
-    )
-    return epsilonx, epsilony, delta1
+        return pulse_derivative(t, A)
 
-def pulse_functions_gauss(tg, Delta, rrr, sigma_ratio=0.3, use_drag=True):
-    sigma = tg * sigma_ratio
-    B_ratio = np.exp(-tg**2 / (8 * sigma**2)) # B = B_ratio * A
+    def delta1(t, args=None):
+        ep = ep_pi(t)
+        return ((rrr**2 - 4) * ep**2 / (4 * Delta) - (rrr**4 - 7 * rrr**2 + 12) * ep**4 / (16 * Delta**3))
 
-    gauss = lambda t: np.exp(-(t - tg / 2)**2 / (2 * sigma**2))
-    ep_pi_s = lambda t, A: (gauss(t) - B_ratio) * A
-    if(use_drag):
-        delta1_s = lambda t, A: ((rrr**2-4) * ep_pi_s(t, A)**2/(4*Delta) -
-                    (rrr**4 - 7*rrr**2 + 12)*ep_pi_s(t, A)**4 / (16*Delta**3))
-    else: delta1_s = lambda t,A, args=None: 0
-    # find the pulse-amplitude
-    def pulse_area(A):
-        # f = lambda t: np.sqrt(delta1_s(t, A)**2 + 1/4*ep_pi_s(t, A)**2)
-        f = lambda t: ep_pi_s(t, A)/2
-        # f = lambda t: (ep_pi(t, A)*np.sqrt(1-ep_pi(t,A)**2*
-        #                                    ((rrr**2-4)/(4*Delta)-ep_pi(t,A)**2*(rrr**4-7*rrr**2+12)/(16*Delta**3))))
-        # f = lambda t: np.sqrt(delta_detune**2 + A**2 * (np.exp(-(t - tg/2)**2 / (2*sigma**2)) - B_ratio)**2)
-        I, _ = quad(f, 0, tg)
-        return I
-    f = lambda A: pulse_area(A) - np.pi/2
-    sol = root_scalar(
-        f,
-        bracket=[0, 2],
-        method='brentq'
-    )
-    A = sol.root
-    ep_pi = lambda t, args=None: ep_pi_s(t, A)
-    delta1 = lambda t, args=None: delta1_s(t, A)
-    if use_drag:
-        def ep_pi_tder(t, args=None):
-            return -A * (t - tg / 2) * gauss(t) / sigma**2
-        # ep_pi_tder = lambda t: -A/sigma**2 * (t-tg/2) * np.exp(-(t-tg/2)**2/(2*sigma**2))
-        epsilonx = lambda t, args=None: (ep_pi(t) + 
-                            (rrr**2 - 4)*ep_pi(t)**3 / (8*Delta**2) - 
-                            (13*rrr**4 - 76*rrr**2 + 112)*ep_pi(t)**5/(128*Delta**4))
-        epsilony = lambda t, args=None: (-ep_pi_tder(t)/Delta +
-                            33*(rrr**2 - 2) * ep_pi(t)**2 * ep_pi_tder(t) / (24*Delta**3))
-    else: 
-        epsilonx = lambda t, args=None: ep_pi(t)
-        epsilony = lambda t, args=None: 0
-        delta1 = lambda t,args=None: 0
+    def epsilonx(t, args=None):
+        ep = ep_pi(t)
+        return ep + (rrr**2 - 4) * ep**3 / (8 * Delta**2) - (13 * rrr**4 - 76 * rrr**2 + 112) * ep**5 / (128 * Delta**4)
+
+    def epsilony(t, args=None):
+        ep, ep_dot = ep_pi(t), ep_pi_tder(t)
+        return -ep_dot / Delta + 33 * (rrr**2 - 2) * ep**2 * ep_dot / (24 * Delta**3)
+
     return epsilonx, epsilony, delta1
 
 def compute_cos_params(s, tg, use_c=False):
-    epsilonx = np.pi/(2*tg)
+    epsilonx = np.pi/(tg)
     amp_min, amp_max = 0.001, 1.5*2*np.pi
     f = lambda A: np.abs(s.heff_element(s.state_a, s.state_b, s.find_resonance(A, use_c = use_c), A)) - epsilonx # epsilonx * 1 = Omega_ab
     sol = root_scalar(f, bracket=[amp_min, amp_max])
     return sol.root, s.find_resonance(sol.root, use_c = use_c)
-
-if __name__ == "__main__":
-    print("start")
-    s = Simulation()
-    # gaussian without drag
-    tg = 250
-    tlist_fid = np.linspace(0, tg, 25000)
-    cos_amp, cos_wd = compute_cos_params(s, tg)
-    print("cos_wd: ", cos_wd/(2*np.pi), " cos_amp: ", cos_amp/(2*np.pi))
-    gate_time, fid, _ = find_optimal_time(
-        cos_wd, cos_amp, 3,
-        s.state_a, s.state_b, s.state_c,
-        s.E_array, s.V1_dressed_array,
-        tg
-    )
-    print("gate time: ", gate_time, " fidelity: ", fid)
-
-    lh = [s.H0_dressed, [s.V1_dressed, lambda t, args: cos_amp * np.cos(cos_wd * t)]]
-    f_cos = extract_fidelity(lh, tlist_fid, s=s)
-    fpop_cos = extract_pop_fid(lh, tlist_fid, s=s, plot=True)
-    # print("cos: ", fpop_cos)
-    print(f"infidelity cos: {(1-f_cos):.2e} pop: {(1-fpop_cos['iswap_fidelity']):.2e}")

@@ -115,7 +115,8 @@ def extract_pop_fid(lh, tlist, plot=False, debug=False, plot_c=False, s=None, cu
 
     if not cut:
         results['iswap_fidelity'] = (pop_a['state_b'][-1] + pop_b['state_a'][-1]) / 2.0
-
+    else:
+        results['iswap_fidelity'] = pop_b['state_a'][-1]
     if plot:
         fig, axes = plt.subplots(1, 2, figsize=(14, 4.5))
         alpha_ab = 0.3 if plot_c else 1.0
