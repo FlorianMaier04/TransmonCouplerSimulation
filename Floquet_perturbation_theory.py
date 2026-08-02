@@ -365,10 +365,13 @@ def Heff_Floquet_summed(r, b, a, wd, amp, resonances, E, V_posHarm, V0=None, ref
     """
     use_adiabatic_correction = not dwd == 0 or not da == 0
     Hba = 0
-    for l in range(0, r+1):
+    rW=2
+    for l in range(1, r+1):
         Hba += Heff_Floquet(l, b, a, wd, resonances, E, V_posHarm, V0, ref_state, printProcesses, analytics, check_validity)
         if use_adiabatic_correction:
             Hba -= Heff_ad_correction_Floquet(l, b, a, wd, amp, dwd, da, t, resonances, E, V_posHarm, V0, analytics=analytics, rW=rW)
+
+
     return Hba
 
 def W_Floquet(r, b, a, wd, resonances, E, V_posHarm, V0=None, ref_state=None, printProcesses=False, analytics=False, dwd=0, t=0):

@@ -62,6 +62,7 @@ class Simulation:
               self.g12_num * ((self.a_q1 - self.a_q1.dag()) @ (self.a_q2 - self.a_q2.dag())))
         H0 = Hq1 + Hq2 + Hc + V0
         V1 = self.a_qc.dag() @ self.a_qc
+        # V1 = (self.a_qc.dag() @ self.a_qc.dag() @ self.a_qc @ self.a_qc) + (self.a_qc.dag() @ self.a_qc)
         # Diagonalize H0
         evals, evecs = H0.eigenstates()
         self.sorted_evals, self.sorted_evecs = SortedFRFSpectrum(evals, evecs, self.dim_q1, self.dim_c, self.dim_q2)
@@ -218,7 +219,7 @@ def pulse_functions(tg, Delta, rrr, sigma_r=0.3, pulse='gauss'):
     return epsilonx, epsilony, delta1
 
 def compute_cos_params(s, tg, use_c=False):
-    epsilonx = np.pi/(tg)
+    epsilonx = np.pi/(2*tg)
     amp_min, amp_max = 0.001, 1.5*2*np.pi
     f = lambda A: np.abs(s.heff_element(s.state_a, s.state_b, s.find_resonance(A, use_c = use_c), A)) - epsilonx # epsilonx * 1 = Omega_ab
     sol = root_scalar(f, bracket=[amp_min, amp_max])
