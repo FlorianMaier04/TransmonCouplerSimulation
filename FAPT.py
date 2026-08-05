@@ -14,10 +14,10 @@ The main functions are (see their respective help documentation for details):
 """
 
 import numpy as np
+from scipy.linalg import expm
+from tqdm import tqdm
 import itertools as it
 import sympy as sy
-import copy
-from fractions import Fraction
 import os
 from functools import lru_cache
 from Floquet_perturbation_theory import *
@@ -225,8 +225,7 @@ def Heff_ad_correction_Floquet_fast(r, l, k, wd, A, dwd, dA, t,
                      conjugated as a whole before multiplying the plain,
                      undifferentiated r_{W2} (ket/a) factor.
                      (toggle: include_geometric)
-      - micromotion: -t*dwd*p * W^† p W  (+ G-correction), unchanged
-                     (toggle: include_micromotion, include_g_correction)
+      - micromotion: -t*dwd*p * W^† p W  (+ G-correction)
     """
     if not (include_geometric or include_micromotion):
         return sy.S.Zero if analytics else 0
@@ -403,9 +402,9 @@ def Heff_Floquet_total_matrix_summed(rH, wd, A, resonances, E, V_posHarm,
     for i, bi in enumerate(ind_inv):
         for j, aj in enumerate(ind_inv):
             H[i, j] = (
-                Heff_Floquet_summed(rH, bi, aj, wd, A, resonances, E, V_full,
+                Heff_Floquet_summed(rH, bi, aj, wd, resonances, E, V_full,
                                     V0=V0, ref_state=ref_state,
-                                    analytics=analytics, dwd=0, da=0, t=t, rW=0))
+                                    analytics=analytics))
             if include_geometric or include_micromotion:
                 H[i, j] += Heff_ad_correction_Floquet_fast(
                     rH, bi, aj, wd, A, dwd, dA, t,
@@ -418,10 +417,95 @@ def Heff_Floquet_total_matrix_summed(rH, wd, A, resonances, E, V_posHarm,
     return H
 
 
+import time
 import numpy as np
-from scipy.linalg import expm
-from tqdm import tqdm
+import sympy as sy
+import scipy.linalg as scipy_linalg
 
+def Psi_t_hybrid_piecewise(rH, rW, wd, A, resonances, E, V_posHarm,
+                           initial_state, tlist, t_sym, V0=None, ref_state=None,
+                           include_geometric=True, include_micromotion=True, 
+                           include_g_correction=True, param_dict=None, verbose=False):
+    """
+    Hybrid time evolution:
+    1. Computes Heff and W symbolically (fast).
+    2. Lambdifies the matrices to ultra-fast NumPy functions.
+    3. Solves the time evolution piecewise (numerically) over tlist.
+    """
+    def log(msg):
+        if verbose: print(msg, flush=True)
+
+    if param_dict is None:
+        param_dict = {}
+
+    res = _res_dict(resonances) if callable(globals().get('_res_dict')) else resonances
+    if isinstance(resonances, list):
+        resonances = dict(resonances)
+
+    D, d_res = len(E), len(resonances)
+    ind = {k: i for i, k in enumerate(resonances.keys())}
+    kref = min(resonances)
+
+    state = np.argmax(np.abs(initial_state.full().ravel()))
+    if state not in ind:
+        raise ValueError("Initial state is not contained in the resonant subspace.")
+    initial_eff_idx = ind[state]
+
+    # --- 1. Symbolische Vorarbeit ---
+    log("[1/3] Computing symbolic transformation W ...")
+
+    log("[2/3] Computing symbolic effective Hamiltonian Heff ...")
+
+
+    log("[3/3] Constructing full transformation matrix M(t) and lambdifying ...")
+    # M_sym ist die Transformationsmatrix, die den effektiven Zustand zurück in den 
+    # ursprünglichen Hilbertraum mappt, inklusive der Floquet-Phasen.
+    M_sym = sy.zeros(D, d_res)
+    for r in range(rW):
+        for l in range(D):
+            for idx_a, a in enumerate(res):
+                W_la = W[r, l, a]
+                for p, (W_lp_a, _, _) in W_la.items():
+                    phase = sy.exp(-sy.I * (E[kref] + p * wd) * t_sym)
+                    M_sym[l, idx_a] += phase * W_lp_a
+
+    # Parameter einsetzen, BEVOR wir lambdify aufrufen
+    Heff_sub = sy.Matrix(Heff).subs(param_dict).doit()
+    M_sub = M_sym.subs(param_dict).doit()
+
+    # SymPy Ausdrücke in C-schnelle NumPy Funktionen umwandeln
+    H_func = sy.lambdify(t_sym, Heff_sub, modules=['numpy', 'scipy'])
+    M_func = sy.lambdify(t_sym, M_sub, modules=['numpy', 'scipy'])
+
+    # --- 2. Numerische Zeitentwicklung ---
+    log("      Running fast piecewise numerical time evolution ...")
+    
+    # Array für die Ergebnisse (Zeilen: Zustände, Spalten: Zeitschritte)
+    psi_t_num = np.zeros((D, len(tlist)), dtype=complex)
+    
+    # Startzustand im effektiven Frame (d_res x 1)
+    c_eff = np.zeros(d_res, dtype=complex)
+    c_eff[initial_eff_idx] = 1.0
+
+    for i, t_val in enumerate(tlist):
+        # 1. Speichere den Zustand im ursprünglichen Hilbertraum ab
+        M_val = np.array(M_func(t_val), dtype=complex).reshape(D, d_res)
+        psi_t_num[:, i] = M_val @ c_eff
+        
+        # 2. Propagiere den effektiven Zustand c_eff zum nächsten Zeitschritt
+        if i < len(tlist) - 1:
+            dt = tlist[i+1] - t_val
+            # Midpoint-Regel für höhere Genauigkeit (Magnus 2. Ordnung Approximation)
+            t_mid = t_val + dt / 2.0
+            
+            H_mid = np.array(H_func(t_mid), dtype=complex).reshape(d_res, d_res)
+            
+            # Zeitentwicklungsoperator für den kleinen Schritt dt
+            dU = scipy_linalg.expm(-1j * H_mid * dt)
+            c_eff = dU @ c_eff
+
+    log("✅ Hybrid calculation completed!")
+    return psi_t_num
 
 def Psi_t_from_Heff(
     rH,
@@ -437,7 +521,6 @@ def Psi_t_from_Heff(
     include_geometric=True,
     include_micromotion=True,
     include_g_correction=True,
-    analytics=False,
     substeps=1,
 ):
 
@@ -524,7 +607,6 @@ def Psi_t_from_Heff(
                 dwd=dwd_val,
                 dA=dA_val,
                 t=t_sub,
-                analytics=analytics,
                 rW=rW,
                 include_geometric=include_geometric,
                 include_micromotion=include_micromotion,
@@ -535,3 +617,140 @@ def Psi_t_from_Heff(
             phi = expm(-1j * Heff * sub_dt) @ phi
 
     return psi
+
+
+import sympy as sy
+import numpy as np
+import scipy.linalg as scipy_linalg
+import matplotlib.pyplot as plt
+import time
+
+def commutator(A, B):
+    return sy.expand(A * B - B * A)
+
+def magnus_operator(H, t, ti, tf, order=1, numeric_exp=True, verbose=True):
+    """Compute 1st/2nd order Magnus expansion U = exp(Omega)."""
+    def log(msg, end="\n"):
+        if verbose: print(msg, end=end, flush=True)
+
+    if order not in (1, 2):
+        raise ValueError("Order must be 1 or 2.")
+    
+    # .doit() erzwingt die Auswertung eventueller Ableitungen (z.B. wd.diff(t)), 
+    # die noch in H stecken könnten.
+    H = sy.Matrix(H).doit() if not isinstance(H, sy.MatrixBase) else H.doit()
+    rows, cols = H.shape
+    t1, t2 = sy.Symbol("t1", real=True), sy.Symbol("t2", real=True)
+
+    # 1st order
+    log("  -> [Magnus] Calculating 1st order ...", end="")
+    t_start = time.time()
+    H1 = H.subs(t, t1).doit()
+    Omega = sy.zeros(rows, cols)
+    for i in range(rows):
+        for j in range(cols):
+            expr = sy.expand(H1[i, j])
+            # conds='none' verhindert Piecewise-Objekte, .doit() erzwingt die Integration
+            Omega[i, j] = -sy.I * sy.integrate(expr, (t1, ti, tf), conds='none').doit()
+    log(f" Done ({time.time() - t_start:.2f}s)")
+
+    # 2nd order
+    if order == 2:
+        log("  -> [Magnus] Calculating 2nd order ...", end="")
+        t_start = time.time()
+        H2 = H.subs(t, t2).doit()
+        Comm = H1 * H2 - H2 * H1
+        inner = sy.zeros(rows, cols)
+        for i in range(rows):
+            for j in range(cols):
+                expr = sy.expand(Comm[i, j])
+                inner[i, j] = sy.integrate(expr, (t2, ti, t1), conds='none').doit()
+
+        Omega2 = sy.zeros(rows, cols)
+        for i in range(rows):
+            for j in range(cols):
+                expr2 = sy.expand(inner[i, j])
+                Omega2[i, j] = -sy.Rational(1, 2) * sy.integrate(expr2, (t1, ti, tf), conds='none').doit()
+        Omega += Omega2
+        log(f" Done ({time.time() - t_start:.2f}s)")
+
+    log("  -> [Magnus] Simplifying Omega ...", end="")
+    t_start = time.time()
+    # Auch hier .doit() anhängen, falls trigsimp unaufgelöste Operationen hinterlässt
+    Omega = sy.trigsimp(Omega).doit()
+    log(f" Done ({time.time() - t_start:.2f}s)")
+
+    # Exponential handling
+    if numeric_exp:
+        log("  -> [Magnus] Applying Taylor expansion approximation for U ...")
+        U = sy.eye(rows) + Omega + sy.Rational(1, 2) * (Omega * Omega)
+    else:
+        log("  -> [Magnus] Computing exact Matrix.exp() ...", end="")
+        t_start = time.time()
+        U = Omega.exp()
+        log(f" Done ({time.time() - t_start:.2f}s)")
+
+    return U, Omega
+
+
+def Psi_t_analytical_magnus(rH, rW, wd, A, resonances, E, V_posHarm,
+                            initial_state, t, te, V0=None, ref_state=None,
+                            include_geometric=True, include_micromotion=True, 
+                            include_g_correction=True, param_dict=None, verbose=True):
+    """Analytical time evolution via Floquet APT and Magnus expansion."""
+    def log(msg, end="\n"):
+        if verbose: print(msg, end=end, flush=True)
+
+    res = _res_dict(resonances) if callable(globals().get('_res_dict')) else resonances
+    if isinstance(resonances, list):
+        resonances = dict(resonances)
+
+    D, d_res = len(E), len(resonances)
+    ind = {k: i for i, k in enumerate(resonances.keys())}
+    kref = min(resonances)
+
+    state = np.argmax(np.abs(initial_state.full().ravel()))
+    if state not in ind:
+        raise ValueError("Initial state is not contained in the resonant subspace.")
+
+    log("\n[1/4] Computing transformation W ...")
+    t0 = time.time()
+    W = W_Floquet_elements_fast(rW, wd, resonances, E, V_posHarm, A=A, V0=V0, analytics=True)
+    log(f"      Duration: {time.time() - t0:.2f}s")
+
+    log("\n[2/4] Computing effective Hamiltonian Heff ...")
+    t0 = time.time()
+    Heff = Heff_Floquet_total_matrix_summed(
+        rH, wd, A, resonances, E, V_posHarm, V0=V0, ref_state=ref_state,
+        dwd=wd.diff(t), dA=A.diff(t), t=t, analytics=True, rW=rW, 
+        include_geometric=include_geometric, include_micromotion=include_micromotion, 
+        include_g_correction=include_g_correction, W=W
+    )
+    log(f"      Duration: {time.time() - t0:.2f}s")
+
+    log("\n[3/4] Running Magnus expansion ...")
+    t0 = time.time()
+    U, _ = magnus_operator(Heff, t=t, ti=0, tf=te, order=2, numeric_exp=True, verbose=verbose)
+    log(f"      Total Magnus duration: {time.time() - t0:.2f}s")
+
+    log("\n[4/4] Constructing coefficients in original Hilbert space ...")
+    t0 = time.time()
+    psi_t = [0 for _ in range(D)]
+
+    for r in range(rW):
+        for l in range(D):
+            for idx_a, a in enumerate(res):
+                contrib = 0
+                for idx_b, b in enumerate(res):
+                    W_la = W[r, l, a]
+                    for p, (W_lp_a, _, _) in W_la.items():
+                        # sy.I anstelle von 1j genutzt, damit der Term vollständig symbolisch bleibt!
+                        phase = sy.exp(-sy.I * (E[kref] + p * wd) * t)
+                        contrib += phase * U[idx_a, idx_b] * W_lp_a
+                psi_t[l] += contrib
+                
+    # Ein optionales .doit() am Ende kann noch Rest-Operationen abarbeiten
+    psi_t = [sy.expand(component).doit() for component in psi_t]
+    
+    log(f"      Duration: {time.time() - t0:.2f}s\n✅ Analytical evaluation completed!")
+    return psi_t

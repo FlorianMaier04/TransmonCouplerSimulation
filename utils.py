@@ -23,7 +23,7 @@ class Simulation:
             fre_sweep: Array of frequency detunings to sweep (default: -0.1 to 0.1, 10 points)
         """
         self.dim_q1, self.dim_q2, self.dim_c = dim_q1, dim_q2, dim_c
-        self.d = self.dim_q1 * self.dim_c * self.dim_q2
+        self.D = self.dim_q1 * self.dim_c * self.dim_q2
         self.state_b = dim_q2 * dim_c  # state |100>
         self.state_a = 1  # state |001>
         self.state_c = dim_q2  # state |010>
@@ -66,8 +66,8 @@ class Simulation:
         # Diagonalize H0
         evals, evecs = H0.eigenstates()
         self.sorted_evals, self.sorted_evecs = SortedFRFSpectrum(evals, evecs, self.dim_q1, self.dim_c, self.dim_q2)
-        self.E_array = self.sorted_evals.reshape(self.d)
-        self.E_states = self.sorted_evecs.reshape(self.d)
+        self.E_array = self.sorted_evals.reshape(self.D)
+        self.E_states = self.sorted_evecs.reshape(self.D)
         self.dressed_base_states = [basis(27, idx) for idx in range(0,27)]
         self.H0 = H0 # be sure to use H0 when working in the normal basis
         self.V1 = V1 # be sure to use V1 when working in the normal basis (not dressed)
@@ -82,7 +82,7 @@ class Simulation:
         )
         self.H0_dressed = self.t_interaction_picture.dag() @ H0 @ self.t_interaction_picture
         self.V1_dressed = self.t_interaction_picture.dag() @ V1 @ self.t_interaction_picture
-        self.V1_dressed_array = self.V1_dressed.full().reshape(self.d, self.d).real
+        self.V1_dressed_array = self.V1_dressed.full().reshape(self.D, self.D).real
         # Resonant frequency
         self.res_freq_static = (self.sorted_evals[1, 0, 0] - self.sorted_evals[0, 0, 1]) / (2 * np.pi)
 
@@ -91,9 +91,9 @@ class Simulation:
         resonances = {self.state_a:0, self.state_b:1, self.state_c:2} if use_c else {self.state_a:0, self.state_b:1}
         
         delta_i = Heff_Floquet_summed(self.order,i,i,
-            fre, amp, resonances,self.E_array,amp / 2 * self.V1_dressed_array,V0=None,analytics=False,)
+            fre, resonances,self.E_array,amp / 2 * self.V1_dressed_array,V0=None,analytics=False,)
         delta_f = Heff_Floquet_summed(order,f,f,
-            fre, amp, resonances,self.E_array,amp / 2 * self.V1_dressed_array,V0=None,analytics=False,)
+            fre, resonances,self.E_array,amp / 2 * self.V1_dressed_array,V0=None,analytics=False,)
         diff = delta_f - delta_i
         return float(np.real(diff))
 
@@ -103,10 +103,10 @@ class Simulation:
             args=(amp, self.order, self.state_a, self.state_b, use_c),)
         return resonant_wd_solution[0]
 
-    def heff_element(self, i, j, wd, amp, dwd=0, da=0, t=0):
+    def heff_element(self, i, j, wd, amp):
         V_posharm = (amp/2) * self.V1_dressed_array
         V0 = None
-        element = Heff_Floquet_summed(self.order, i, j, wd, amp, self.resonances, self.E_array, V_posharm, V0=V0, dwd=dwd, da=da, t=t)
+        element = Heff_Floquet_summed(self.order, i, j, wd, self.resonances, self.E_array, V_posharm, V0=V0)
         return element
 
     def heff(self, wd, amp, dwd=0, da=0, t=0):
@@ -114,7 +114,7 @@ class Simulation:
         states = [*self.resonances.keys()]
         for idx_a, state_a in enumerate(states):
             for idx_b, state_b in enumerate(states):
-                heff[idx_a,idx_b] = self.heff_element(state_a, state_b, wd, amp, dwd=dwd, da=da, t=t)
+                heff[idx_a,idx_b] = self.heff_element(state_a, state_b, wd, amp)
         return heff
     
 def _is_symbolic(value):

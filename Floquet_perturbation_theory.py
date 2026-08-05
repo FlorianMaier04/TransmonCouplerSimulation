@@ -21,81 +21,10 @@ from fractions import Fraction
 import os
 import warnings
 
-from tqdm import tqdm
-
 ## Folder containing the .txt files of DPT coefficients
 folder_DPT = os.path.join(os.path.dirname(__file__), 'DPT')
 
-def Heff_ad_correction_Floquet(r, k, l, wd, amp, dwd, da, t, resonances, E, V_posHarm, V0=None, ref_state=None, analytics=False, rW=-1):
-    """
-    Adiabatic correction to the effective Hamiltonian from a time-dependent drive frequency.
-
-    The correction is built from the Floquet transformation W at the requested order via
-    the projected adiabatic term
-        H_ad = -i P W^\u2021 dW/dt P,
-    where P projects onto the resonant degenerate subspace. In practice this is evaluated
-    as a sum over the resonant states and the harmonics of W.
-
-    Parameters
-    ---------
-    r : int
-        perturbative order of the W transformation used for the correction
-    b, a : int
-        resonant states defining the matrix element <b|H_ad|a>
-    wd : float or SymPy symbol
-        drive frequency
-    dwd : float, callable, or SymPy expression
-        derivative of the drive frequency with respect to time. If callable, it is evaluated
-        at the time t.
-    t : float
-        current time used when dwd is callable
-    resonances : dict or list of tuples
-        resonance orders of the degenerate subspace
-    E : numpy array
-        un-driven spectrum
-    V_posHarm : list or numpy array
-        positive drive harmonics in the eigenbasis of H0
-    V0 : numpy array (optional)
-        static perturbation
-    ref_state : int (optional)
-        reference state used to define detunings
-    analytics : bool (optional)
-        if True, use symbolic expressions via SymPy
-    """
-    result = sy.S.Zero if analytics else 0
-    if amp==0: return 0
-
-    da_contrib_real = (1j*(da/amp) if not analytics else -sy.im(da/amp))/2
-    ## Construct element of W needed such that W[r,l,a] is the dictionnary of {p: <<l,p|W_r|a,na>>}
-    if rW == -1:
-        rW = r
-    W_el = W_Floquet_elements(rW, wd, resonances, E, V_posHarm, V0=V0, analytics=analytics)
-    for rW1 in range(0,rW+1):
-        for rW2 in range(0,rW+1):
-            for a in range(len(E)):
-                W_a_k = W_el[rW1, a, k]
-                W_a_l = W_el[rW2, a, l]
-                for p, W_ap_k in W_a_k.items():
-                    W_ap_k_conj = np.conj(W_ap_k) if not analytics else sy.conjugate(W_ap_k)
-                    # contribution from amplitude derviative
-                    if da != 0:
-                        contrib_a = 0
-                        for b in range(len(E)):
-                            W_b_l = W_el[rW2, b, l]
-                            for p2, W_bp2_l in W_b_l.items():
-                                contrib_a += rW2 * W_bp2_l * W_ap_k_conj * da_contrib_real
-                        result += contrib_a
-
-                    # contribution from wd derivative
-                    if p not in W_a_l:
-                        continue
-                    W_ap_l = W_a_l[p]
-                    result += p * W_ap_l * W_ap_k_conj * t * dwd
-    # if l == k:
-    #     result = sy.re(result) if analytics else np.real(result)
-    return result
-
-def Heff_Floquet(r, b, a, wd, resonances, E, V_posHarm, V0=None, ref_state=None, printProcesses=False, analytics=False, check_validity=False, dwd=0, t=0):
+def Heff_Floquet(r, b, a, wd, resonances, E, V_posHarm, V0=None, ref_state=None, printProcesses=False, analytics=False, check_validity=False):
     """
     Effective Hamiltonian for multi-photon resonances of a periodically driven Hamiltonian.
 
@@ -157,7 +86,7 @@ def Heff_Floquet(r, b, a, wd, resonances, E, V_posHarm, V0=None, ref_state=None,
     V0 = np.zeros((D, D), dtype=dtype_E) if V0 is None else np.array(V0, dtype=dtype_E)
     ## Choose a reference state for the detuning, if it is not given
     if ref_state is None:
-        ref_state = min(resonances.keys())      
+        ref_state = min(resonances.keys())
     ## Put detuning in perturbation and set energy of final state to resonance. By def delta[k] = E[k] - E[ref_state] - (resonances[k] - resonances[ref_state])*wd
     for k in resonances.keys():
         if k != ref_state:
@@ -193,8 +122,8 @@ def Heff_Floquet(r, b, a, wd, resonances, E, V_posHarm, V0=None, ref_state=None,
         coeffsDPT = {}
         for line in coeffsMatrix:
             if analytics:
-                numerator, energy_gap = line[-1].as_integer_ratio()
-                coeffsDPT[tuple(line[:-1])] = Fraction(numerator, energy_gap)
+                numerator, denominator = line[-1].as_integer_ratio()
+                coeffsDPT[tuple(line[:-1])] = Fraction(numerator, denominator)
             else:
                 coeffsDPT[tuple(line[:-1])] = line[-1]
     if printProcesses:
@@ -203,7 +132,7 @@ def Heff_Floquet(r, b, a, wd, resonances, E, V_posHarm, V0=None, ref_state=None,
     ## Track maximum perturbation ratio for validity check
     max_pert_ratio = 0 if not analytics else None
     max_pert_index = {'a':0, 'b':0, 'ptot':0, 'p':0} if not analytics else None
-    for p in (itertools.product(*(np.arange(-nHarm, nHarm+1) for _ in range(r-1)))):
+    for p in itertools.product(*(np.arange(-nHarm, nHarm+1) for _ in range(r-1))):
         ## Iterate through all possible combinations of harmonics such that p[0] + ... + p[r-1] = nb - na
         p = list(p)
         ## Add p[r-1] = nb - na - (p[0] + ... + p[r-2])
@@ -237,16 +166,16 @@ def Heff_Floquet(r, b, a, wd, resonances, E, V_posHarm, V0=None, ref_state=None,
                 ptot = 0
                 for j in range(r-1):
                     ptot += p[j]
-                    energy_gap = E[a] + ptot*wd - E[k[j]]
-                    V_element = V(p[j+1])[k[j+1], k[j]]
                     ## Check perturbation validity at this step
                     if check_validity and not analytics:
-                        if np.abs(energy_gap) > 1e-10:  # Avoid division by near-zero
-                            pert_ratio = np.abs(V_element) / np.abs(energy_gap)
+                        V_element = np.abs(V(p[j+1])[k[j+1], k[j]])
+                        energy_gap = np.abs(E[a] + ptot*wd - E[k[j]])
+                        if energy_gap > 1e-10:  # Avoid division by near-zero
+                            pert_ratio = V_element / energy_gap
                             max_pert_ratio = max(max_pert_ratio, pert_ratio)
                             if max_pert_ratio == pert_ratio:
-                                max_pert_index = {'a': k[j+1], 'b': k[j], 'ptot': ptot, 'p':p[j+1]} 
-                    contrib *= V_element / energy_gap
+                                max_pert_index = {'a': k[j+1], 'b': k[j], 'ptot': ptot, 'p':p[j+1]}
+                    contrib = contrib*V(p[j+1])[k[j+1], k[j]]/(E[a] + ptot*wd - E[k[j]])
                 if printProcesses and ( (analytics and contrib != 0) or (not analytics and not np.isclose(contrib, 0, atol=1e-12))):
                     nbProcesses += 1
                     print("harmonics:", p, "virtual states:", k[:-1], "no resonant step.", "amplitude:", contrib)
@@ -287,18 +216,16 @@ def Heff_Floquet(r, b, a, wd, resonances, E, V_posHarm, V0=None, ref_state=None,
                     ptot = 0
                     for j in range(r-1):
                         ptot += p[j]
-                        energy_gap = E[a] + ptot*wd - E[k[j]]
-
-                        V_element = V(p[j+1])[k[j+1], k[j]]
-                        
                         ## Check perturbation validity at this step
                         if check_validity and not analytics:
-                            if np.abs(energy_gap) > 1e-10:  # Avoid division by near-zero
-                                pert_ratio = np.abs(V_element) / np.abs(energy_gap)
+                            V_element = np.abs(V(p[j+1])[k[j+1], k[j]])
+                            energy_gap = np.abs(E[a] + ptot*wd - E[k[j]])
+                            if energy_gap > 1e-10:  # Avoid division by near-zero
+                                pert_ratio = V_element / energy_gap
                                 max_pert_ratio = max(max_pert_ratio, pert_ratio)
                                 if max_pert_ratio == pert_ratio:
                                     max_pert_index = {'a': k[j+1], 'b': k[j], 'ptot': ptot, 'p':p[j+1]}
-                        contrib = contrib*V(p[j+1])[k[j+1], k[j]]*(energy_gap)**(-m[j])
+                        contrib = contrib*V(p[j+1])[k[j+1], k[j]]*(E[a] + ptot*wd - E[k[j]])**(-m[j])
                     if printProcesses and ( (analytics and contrib != 0) or (not analytics and not np.isclose(contrib, 0, atol=1e-12))):
                         nbProcesses += 1
                         print("harmonics:", p, "virtual states:", k[:-1], "resonant steps:", R, "powers m:", m, "DPT coeff:", coeffsDPT[tuple(m)], "amplitude:", contrib)
@@ -321,7 +248,7 @@ def Heff_Floquet(r, b, a, wd, resonances, E, V_posHarm, V0=None, ref_state=None,
         result = sy.re(result) if analytics else np.real(result)
     return result
 
-def Heff_Floquet_summed(r, b, a, wd, amp, resonances, E, V_posHarm, V0=None, ref_state=None, printProcesses=False, analytics=False, check_validity=False, dwd=0, da=0, t=0, rW=-1):
+def Heff_Floquet_summed(r, b, a, wd, resonances, E, V_posHarm, V0=None, ref_state=None, printProcesses=False, analytics=False, check_validity=False):
     """
     Effective Hamiltonian for multi-photon resonances of a periodically driven Hamiltonian.
 
@@ -363,18 +290,12 @@ def Heff_Floquet_summed(r, b, a, wd, amp, resonances, E, V_posHarm, V0=None, ref
     Hba_summed : float or SymPy symbol
         Sum of matrix element sum_{l<=r} <b| H^{(r)} |a> of the effective Hamiltonian up to order r. Real number if a=b (diagonal element).
     """
-    use_adiabatic_correction = not dwd == 0 or not da == 0
-    Hba = 0
-    rW=2
-    for l in range(1, r+1):
+    Hba = Heff_Floquet(1, b, a, wd, resonances, E, V_posHarm, V0, ref_state, printProcesses, analytics, check_validity)
+    for l in range(2, r+1):
         Hba += Heff_Floquet(l, b, a, wd, resonances, E, V_posHarm, V0, ref_state, printProcesses, analytics, check_validity)
-        if use_adiabatic_correction:
-            Hba -= Heff_ad_correction_Floquet(l, b, a, wd, amp, dwd, da, t, resonances, E, V_posHarm, V0, analytics=analytics, rW=rW)
-
-
     return Hba
 
-def W_Floquet(r, b, a, wd, resonances, E, V_posHarm, V0=None, ref_state=None, printProcesses=False, analytics=False, dwd=0, t=0):
+def W_Floquet(r, b, a, wd, resonances, E, V_posHarm, V0=None, ref_state=None, printProcesses=False, analytics=False):
     """
     Matrix element of the W operator computed at order r of degenerate perturbation theory in Floquet Sambe space.
 
@@ -456,7 +377,7 @@ def W_Floquet(r, b, a, wd, resonances, E, V_posHarm, V0=None, ref_state=None, pr
     ## Number of harmonics (max number of photon absorbed or emit at each step)
     nHarm = len(V_posHarm)
     Vdag = [V_posHarm[p].T.conj() for p in range(nHarm)]
-    def V(p, ):
+    def V(p):
         """
         Drive harmonics
         V(0) = V0
@@ -523,9 +444,8 @@ def W_Floquet(r, b, a, wd, resonances, E, V_posHarm, V0=None, ref_state=None, pr
                     ptot = 0
                     for j in range(1, r+1):
                         ptot += p_list[j]
-                        egap = E[a] + ptot*wd - E[k[j]]
-                        contrib *= V(p_list[j])[k[j], k[j-1]]*(egap)**(-m[j])
-                    if printProcesses and ((analytics and contrib != 0) or (not analytics and not np.isclose(contrib, 0, atol=1e-12))):
+                        contrib = contrib*V(p_list[j])[k[j], k[j-1]]*(E[a] + ptot*wd - E[k[j]])**(-m[j])
+                    if printProcesses and ( (analytics and contrib != 0) or (not analytics and not np.isclose(contrib, 0, atol=1e-12))):
                         print("p:", p, "harmonics:", p_list[1:], "virtual states:", k[1:-1], "resonant steps:", R, "powers m:", m[1:], "DPT coeff:", c_DPT_W, "amplitude:", contrib)
                     Wp_plist_contrib += contrib
         if ( (analytics and Wp_plist_contrib != 0) or (not analytics and not np.isclose(Wp_plist_contrib, 0, atol=1e-12))):
@@ -538,7 +458,7 @@ def W_Floquet(r, b, a, wd, resonances, E, V_posHarm, V0=None, ref_state=None, pr
                 W_terms[p] = Wp_plist_contrib
     return W_terms
 
-def Heff_Floquet_matrix_summed(rH, wd, resonances, E, V_posHarm, V0=None, analytics=False, dwd=0, t=0):
+def Heff_Floquet_matrix_summed(rH, wd, resonances, E, V_posHarm, V0=None, analytics=False):
     """
     Effective Hamiltonian up to order r (sum of orders 1 to r) returned in matrix form.
     
@@ -605,10 +525,10 @@ def Heff_Floquet_matrix_summed(rH, wd, resonances, E, V_posHarm, V0=None, analyt
     Heff_matrix = np.zeros((d_res,d_res), dtype=dtype)
     for j1 in range(d_res):
         for j2 in range(d_res):
-            Heff_matrix[j1,j2] = Heff_Floquet_summed(rH, ind_inv[j1], ind_inv[j2], wd, resonances, E, V_posHarm, V0, kref, dwd=dwd, t=t)
+            Heff_matrix[j1,j2] = Heff_Floquet_summed(rH, ind_inv[j1], ind_inv[j2], wd, resonances, E, V_posHarm, V0, kref)
     return Heff_matrix
 
-def W_Floquet_elements(rW, wd, resonances, E, V_posHarm, V0=None, ref_state=None, analytics=False, dwd=0, t=0):
+def W_Floquet_elements(rW, wd, resonances, E, V_posHarm, V0=None, ref_state=None, analytics=False):
     """
     All matrix elements of W up to order r needed to compute the effective dynamics.
 
@@ -672,7 +592,7 @@ def W_Floquet_elements(rW, wd, resonances, E, V_posHarm, V0=None, ref_state=None
     else:
         kref = ref_state
     ## Construct element of W needed such that W[r,l,a] is the dictionnary of {p: <<l,p|W_r|a,na>>}
-    W_elemt = {(r,l,a): W_Floquet(r, l, a, wd, resonances, E, V_posHarm, V0, kref, analytics=analytics, dwd=dwd, t=t) for r in range(rW+1) for l in range(D) for a in resonances.keys()}
+    W_elemt = {(r,l,a): W_Floquet(r, l, a, wd, resonances, E, V_posHarm, V0, kref, analytics=analytics) for r in range(rW+1) for l in range(D) for a in resonances.keys()}
     return W_elemt
 
 def dynamics_eff(initial_state, rH, rW, Heff_matrix, W_elemt, t, wd, resonances, E):
