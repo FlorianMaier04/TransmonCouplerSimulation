@@ -8,16 +8,6 @@ from Floquet_perturbation_theory import *
 from scipy.optimize import root_scalar
 import string
 
-def sigma_x_ij(i, j, d):
-    ei = basis(d, i)
-    ej = basis(d, j)
-    return ej*ei.dag() + ei*ej.dag()
-
-def sigma_y_ij(i, j, d):
-    ei = basis(d, i)
-    ej = basis(d, j)
-    return -1j*ei*ej.dag() + 1j*ej*ei.dag()
-
 def extract_fidelity(lh, tlist, sd=3, s=None, plot=False, debug=False):
     """
     lh : list or Qobj

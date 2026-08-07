@@ -74,7 +74,7 @@ def _V_of(p, V0, Vtilde, Vdag, A):
     return amp/2 * (Vtilde[q] if p > 0 else Vdag[q])
 
 def W_Floquet_elements_fast(rW, wd, resonances, E, V_posHarm,
-                            A=None, V0=None, ref_state=None, analytics=False):
+                            A=None, V0=None, ref_state=None, analytics=False, verbose=False):
     """
     Returns:
         W[(r, l, a)][p] = (Wcoeff, dW_dwd_den, dW_dAvec)
@@ -112,8 +112,18 @@ def W_Floquet_elements_fast(rW, wd, resonances, E, V_posHarm,
 
     Vdag = [v.conj().T for v in Vtilde]
 
+    # `_V_of` depends only on `p` here -- V0, Vtilde, Vdag, A are fixed for
+    # the remainder of this call. Without caching, the (potentially
+    # symbolic, expensive-to-assemble) D x D matrix for a given p is
+    # rebuilt from scratch every time it is requested, which in the
+    # analytics=True case can happen tens of thousands of times for the
+    # same handful of distinct p values. This is very likely the single
+    # biggest lever on runtime in symbolic mode.
+    V_cache = {}
     def V(p):
-        return _V_of(p, V0, Vtilde, Vdag, A)
+        if p not in V_cache:
+            V_cache[p] = _V_of(p, V0, Vtilde, Vdag, A)
+        return V_cache[p]
 
     W = {}
 
@@ -127,94 +137,153 @@ def W_Floquet_elements_fast(rW, wd, resonances, E, V_posHarm,
 
         coeffsDPT = _dpt_coeffs(r, unitary=True, analytics=analytics)
 
-        for l in range(D):
-            for a in res:
-                terms = {}
-                for p_list in it.product(range(-nH, nH + 1), repeat=r):
-                    p_final = res[a] + sum(p_list)
+        # Zustandspaare (l, a) vorbereiten
+        state_pairs = [(l, a) for l in range(D) for a in res]
 
-                    for virt in it.product(range(D), repeat=r - 1):
-                        chain = [a] + list(virt) + [l]
+        # tqdm pro Ordnung r für die Zustandspaare
+        if verbose:
+            state_pairs = tqdm(
+                state_pairs,
+                desc=f"W-Floquet order r={r}/{rW}",
+                leave=True,
+                disable=not verbose
+            )
 
-                        R, Rcomp = [], []
+        for l, a in state_pairs:
+            # Collect raw symbolic contributions per p_final in plain
+            # Python lists instead of accumulating with `+=` on the fly.
+            # sympy's Add re-processes the *entire* growing expression on
+            # every `+=`, so incremental accumulation over a large
+            # combinatorial loop is effectively quadratic; combining once
+            # via sy.Add(*list) at the end is linear (plus one flatten/sort
+            # pass) and, for large N, dramatically cheaper.
+            terms = {}
+
+            for p_list in it.product(range(-nH, nH + 1), repeat=r):
+                p_final = res[a] + sum(p_list)
+
+                for virt in it.product(range(D), repeat=r - 1):
+                    chain = [a] + list(virt) + [l]
+
+                    R, Rcomp = [], []
+                    for j in range(1, r + 1):
+                        if chain[j] in res and res[a] + sum(p_list[:j]) == res[chain[j]]:
+                            R.append(j)
+                        else:
+                            Rcomp.append(j)
+
+                    for exps, cDPT in coeffsDPT.items():
+                        m = [None] + list(np.array(exps[::-1], dtype=int))
+                        if not all(m[j] == 0 for j in R):
+                            continue
+                        if not all(m[j] != 0 for j in Rcomp):
+                            continue
+
+                        term = cDPT
+                        amp_pow = np.zeros(nH, dtype=int)
+                        ptot = 0
+                        ok = True
+
+                        steps = []
+
                         for j in range(1, r + 1):
-                            if chain[j] in res and res[a] + sum(p_list[:j]) == res[chain[j]]:
-                                R.append(j)
-                            else:
-                                Rcomp.append(j)
+                            pj = p_list[j - 1]
+                            ptot += pj
+                            eg = E[a] + ptot * wd - E[chain[j]]
 
-                        for exps, cDPT in coeffsDPT.items():
-                            m = [None] + list(np.array(exps[::-1], dtype=int))
-                            if not all(m[j] == 0 for j in R):
-                                continue
-                            if not all(m[j] != 0 for j in Rcomp):
-                                continue
+                            Vj = V(pj)
+                            if Vj is None:
+                                ok = False
+                                break
 
-                            term = cDPT
-                            amp_pow = np.zeros(nH, dtype=int)
-                            ptot = 0
-                            ok = True
+                            Vij = Vj[chain[j], chain[j - 1]]
 
-                            # Alle Informationen speichern
-                            steps = []
+                            term *= Vij * (eg ** (-m[j]))
 
-                            for j in range(1, r + 1):
+                            if pj != 0:
+                                amp_pow[abs(pj) - 1] += 1
 
-                                pj = p_list[j - 1]
-                                ptot += pj
-                                eg = E[a] + ptot * wd - E[chain[j]]
+                            steps.append((pj, eg, Vij, m[j], ptot))
 
-                                Vj = V(pj)
-                                if Vj is None:
-                                    ok = False
-                                    break
+                        if not ok:
+                            continue
 
-                                Vij = Vj[chain[j], chain[j - 1]]
+                        # ---------- computing derivatives -----------
+                        # Fixed: only accumulate the *completed* chain
+                        # product for a given i, once the inner `for j`
+                        # loop has finished building it -- not every
+                        # intermediate partial product along the way.
+                        dterm_dwd_terms = []
+                        for i in Rcomp:
+                            contrib = cDPT
+                            for j, (pj, eg, Vij, mj, ptot) in enumerate(steps, start=1):
+                                if j == i:
+                                    contrib *= Vij * (-mj * ptot) * (eg ** (-mj - 1))
+                                else:
+                                    contrib *= Vij * (eg ** (-mj))
+                            dterm_dwd_terms.append(contrib)
 
-                                term *= Vij * (eg ** (-m[j]))
+                        if p_final not in terms:
+                            terms[p_final] = [[], [], [[] for _ in range(nH)]]
 
-                                if pj != 0:
-                                    amp_pow[abs(pj) - 1] += 1
+                        terms[p_final][0].append(term)
+                        terms[p_final][1].extend(dterm_dwd_terms)
 
-                                steps.append((pj, eg, Vij, m[j], ptot))
-
-                            if not ok:
-                                continue
-
-                            # ---------- computing derivatives -----------
-                            dterm_dwd = 0
-                            for i in Rcomp:
-                                contrib = cDPT
-                                for j, (pj, eg, Vij, mj, ptot) in enumerate(steps, start=1):
-                                    if j == i:
-                                        contrib *= Vij * (-mj * ptot) * (eg ** (-mj - 1))
-                                    else:
-                                        contrib *= Vij * (eg ** (-mj))
-
-                                dterm_dwd += contrib
-
-                            if p_final not in terms:
-                                terms[p_final] = [0, 0, np.zeros(nH, dtype=object if analytics else complex)]
-
-                            terms[p_final][0] += term
-                            terms[p_final][1] += dterm_dwd
-
-                            if A is not None:
-                                dA = np.array(
-                                    [term * (amp_pow[q] / A[q] if A[q] != 0 else 0) for q in range(nH)],
-                                    dtype=object if analytics else complex
+                        if A is not None:
+                            for q in range(nH):
+                                terms[p_final][2][q].append(
+                                    term * (amp_pow[q] / A[q] if A[q] != 0 else 0)
                                 )
-                                terms[p_final][2] += dA
 
-                W[(r, l, a)] = {p: (vals[0], vals[1], vals[2]) for p, vals in terms.items()}
+            # Combine each p_final's collected terms exactly once.
+            W_la = {}
+            for p_final, (term_list, dwd_list, dA_lists) in terms.items():
+                if analytics:
+                    coeff = sy.Add(*term_list)
+                    dwd = sy.Add(*dwd_list) if dwd_list else sy.Integer(0)
+                    dA_vec = np.array(
+                        [sy.Add(*dA_lists[q]) if dA_lists[q] else sy.Integer(0) for q in range(nH)],
+                        dtype=object
+                    )
+                else:
+                    coeff = sum(term_list)
+                    dwd = sum(dwd_list) if dwd_list else 0
+                    dA_vec = np.array(
+                        [sum(dA_lists[q]) if dA_lists[q] else 0 for q in range(nH)],
+                        dtype=complex
+                    )
+                W_la[p_final] = (coeff, dwd, dA_vec)
+
+            W[(r, l, a)] = W_la
+
+    if verbose:
+        print("✅ W-elements calculation completed.")
+
     return W
+
+def _fast_sympy_add(terms, chunk_size=50):
+    if not terms:
+        return sy.S.Zero
+    
+    # In kleineren Blöcken addieren
+    current_level = [sy.Add(*terms[i:i + chunk_size]) for i in range(0, len(terms), chunk_size)]
+    
+    # Hierarchisch zusammenführen
+    while len(current_level) > 1:
+        current_level = [
+            sy.Add(*current_level[i:i + chunk_size]) 
+            for i in range(0, len(current_level), chunk_size)
+        ]
+        
+    return current_level[0]
 
 def Heff_ad_correction_Floquet_fast(r, l, k, wd, A, dwd, dA, t,
                                      resonances, E, V_posHarm, V0=None,
                                      ref_state=None, analytics=False, rW=-1,
                                      W=None, include_geometric=True,
                                      include_micromotion=True,
-                                     include_g_correction=True):
+                                     include_g_correction=True,
+                                     verbose=False):
     """
     Total adiabatic correction, projected onto the resonant subspace.
     Combines two contributions in a single (r1, r2, a, p) Sambe-space loop:
@@ -249,43 +318,63 @@ def Heff_ad_correction_Floquet_fast(r, l, k, wd, A, dwd, dA, t,
 
     if W is None:
         W = W_Floquet_elements_fast(
-            rW, wd, res, E, V_posHarm, A=A, V0=V0, ref_state=ref_state, analytics=analytics
+            rW, wd, res, E, V_posHarm, A=A, V0=V0, ref_state=ref_state, analytics=analytics, verbose=verbose
         )
 
-    zero = sy.S.Zero if analytics else 0
-    out_geom, out_micro = zero, zero
     do_micro = include_micromotion and dwd != 0
 
-    for r1 in range(rW + 1):
-        for r2 in range(rW + 1):
-            if r1 + r2 > r:
-                continue
-            for a in range(len(E)):
-                Wal = W[(r1, a, l)]
-                Wak = W[(r2, a, k)]
+    # Collect raw contributions in plain Python lists and combine once at
+    # the end via sy.Add(*list). Incremental `out += term` inside a large
+    # combinatorial (r1, r2, a, p[, p2]) loop forces sympy to re-flatten
+    # and re-collect the entire, growing expression on every single
+    # addition (effectively O(N^2) in the number of terms N). For
+    # analytics=True this dominates runtime far more than the actual
+    # arithmetic. sy.Add(*list) performs a single linear-time batch
+    # collection instead.
+    geom_terms = []
+    micro_terms = []
 
-                for p, (Wap_l, dwd_dWap_l, dA_dWap_l) in Wal.items():
-                    if p not in Wak:
-                        continue
-                    Wap_k, _, _ = Wak[p]  # plain value only, no derivative needed here
+    r_pairs = [(r1, r2) for r1 in range(rW + 1) for r2 in range(rW + 1) if r1 + r2 <= r]
+    if verbose:
+        print(f"Calculating adiabatic Floquet corrections for element ({l}, {k}) up to order r = {r}...")
+        r_pairs = tqdm(r_pairs, desc=f"Heff ad correction (l={l}, k={k})", disable=not verbose)
 
-                    if include_geometric:
-                        # d/dt <a,p|W^(r1)|l,n_l>, then conjugated as a whole
-                        dt_dWap_l = dwd * dwd_dWap_l + np.dot(dA, dA_dWap_l)
-                        out_geom += 1j * np.conj(dt_dWap_l) * Wap_k
+    for r1, r2 in r_pairs:
+        for a in range(len(E)):
+            Wal = W[(r1, a, l)]  # doesn't depend on r2 -> fetch once here
+            Wak = W[(r2, a, k)]
 
-                    if do_micro:
-                        conj_Wbp = np.conj(Wap_l)
-                        out_micro += -t * dwd * p * conj_Wbp * Wap_k
-                        if include_g_correction:
-                            for p2, (Wap2, _, _) in Wak.items():
-                                if p2 == p:
-                                    continue
-                                phase = np.exp(1j * (p - p2) * wd * t)
-                                out_micro += t * dwd * p2 * phase * conj_Wbp * Wap2
+            for p, (Wap_l, dwd_dWap_l, dA_dWap_l) in Wal.items():
+                if p not in Wak:
+                    continue
+                Wap_k, _, _ = Wak[p]  # plain value only, no derivative needed here
+
+                if include_geometric:
+                    dt_dWap_l = dwd * dwd_dWap_l + np.dot(dA, dA_dWap_l)
+                    geom_terms.append(1j * np.conj(dt_dWap_l) * Wap_k)
+
+                if do_micro:
+                    conj_Wbp = np.conj(Wap_l)
+                    micro_terms.append(-t * dwd * p * conj_Wbp * Wap_k)
+                    if include_g_correction:
+                        for p2, (Wap2, _, _) in Wak.items():
+                            if p2 == p:
+                                continue
+                            phase = np.exp(1j * (p - p2) * wd * t)
+                            micro_terms.append(t * dwd * p2 * phase * conj_Wbp * Wap2)
+
+    if analytics:
+        out_geom = _fast_sympy_add(geom_terms)
+        out_micro = _fast_sympy_add(micro_terms)
+    else:
+        out_geom = sum(geom_terms) if geom_terms else 0
+        out_micro = sum(micro_terms) if micro_terms else 0
 
     if l == k:
         out_micro = sy.re(out_micro) if analytics else np.real(out_micro)
+
+    if verbose:
+        print(f"✅ Adiabatic correction calculation for element ({l}, {k}) completed.")
 
     return out_geom + out_micro
 
@@ -371,7 +460,8 @@ def Heff_Floquet_total_matrix_summed(rH, wd, A, resonances, E, V_posHarm,
                                      analytics=False, rW=-1,
                                      include_geometric=True,
                                      include_micromotion=True,
-                                     include_g_correction=True, W=None):
+                                     include_g_correction=True, W=None,
+                                     verbose=False):
     """
     Base Heff + adiabatic correction.
     V_posHarm should be the normalized harmonics V~_p.
@@ -390,32 +480,42 @@ def Heff_Floquet_total_matrix_summed(rH, wd, A, resonances, E, V_posHarm,
     dtype = sy.Symbol if analytics else complex
     H = np.zeros((d_res, d_res), dtype=dtype)
 
-    if include_geometric or include_micromotion and not W:
+    if (include_geometric or include_micromotion) and not W:
+        if verbose:
+            print("Calculating W-Floquet elements for corrections...")
         W = W_Floquet_elements_fast(
             rW if rW >= 0 else rH, wd, resonances, E, V_posHarm,
-            A=A, V0=V0, ref_state=ref_state, analytics=analytics
+            A=A, V0=V0, ref_state=ref_state, analytics=analytics,
+            verbose=verbose
         )
-    else:
-        W = None
 
     V_full = _V_from_Vtilde(V_posHarm, A=A, analytics=analytics)
-    for i, bi in enumerate(ind_inv):
-        for j, aj in enumerate(ind_inv):
-            H[i, j] = (
-                Heff_Floquet_summed(rH, bi, aj, wd, resonances, E, V_full,
-                                    V0=V0, ref_state=ref_state,
-                                    analytics=analytics))
-            if include_geometric or include_micromotion:
-                H[i, j] += Heff_ad_correction_Floquet_fast(
-                    rH, bi, aj, wd, A, dwd, dA, t,
-                    resonances, E, V_posHarm, V0=V0,
-                    ref_state=ref_state, analytics=analytics, rW=rW,
-                    W=W, include_geometric=include_geometric,
-                    include_micromotion=include_micromotion,
-                    include_g_correction=include_g_correction
-                )
-    return H
 
+    # Indizes-Paare für Matrix-Schleife generieren
+    pairs = [(i, bi, j, aj) for i, bi in enumerate(ind_inv) for j, aj in enumerate(ind_inv)]
+    if verbose:
+        print(f"Calculating effective matrix elements ({d_res}x{d_res})...")
+        pairs = tqdm(pairs, desc="H_eff matrix elements", disable=not verbose)
+
+    for i, bi, j, aj in pairs:
+        H[i, j] = (
+            Heff_Floquet_summed(rH, bi, aj, wd, resonances, E, V_full,
+                                V0=V0, ref_state=ref_state,
+                                analytics=analytics))
+        if include_geometric or include_micromotion:
+            H[i, j] += Heff_ad_correction_Floquet_fast(
+                rH, bi, aj, wd, A, dwd, dA, t,
+                resonances, E, V_posHarm, V0=V0,
+                ref_state=ref_state, analytics=analytics, rW=rW,
+                W=W, include_geometric=include_geometric,
+                include_micromotion=include_micromotion,
+                include_g_correction=include_g_correction, verbose=verbose
+            )
+
+    if verbose:
+        print("✅ H_eff matrix calculation completed.")
+
+    return H
 
 import time
 import numpy as np
