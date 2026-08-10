@@ -4,8 +4,6 @@ from qutip import *
 from Floquet_perturbation_theory import *
 from helper_function import *
 from scipy.optimize import fsolve
-from utils_math import *
-from scipy.integrate import quad
 from scipy.optimize import root_scalar
 
 class Simulation:
@@ -117,10 +115,51 @@ class Simulation:
                 heff[idx_a,idx_b] = self.heff_element(state_a, state_b, wd, amp)
         return heff
     
-
 def compute_cos_params(s, tg, use_c=False):
     epsilonx = np.pi/(2*tg)
     amp_min, amp_max = 0.001, 1.5*2*np.pi
     f = lambda A: np.abs(s.heff_element(s.state_a, s.state_b, s.find_resonance(A, use_c = use_c), A)) - epsilonx # epsilonx * 1 = Omega_ab
     sol = root_scalar(f, bracket=[amp_min, amp_max])
     return sol.root, s.find_resonance(sol.root, use_c = use_c)
+
+def resonant_subspace_column_evolution(lh, tlist, j, debug=False, s=None):
+    options = {"progress_bar": "tqdm", "nsteps":100000} if debug else None
+
+    if s is None:
+        resonant_states = [basis(3, i) for i in range(3)]
+    else:
+        # Order resonant state indices by their assigned order/value
+        state_indices = [k for k, _ in sorted(s.resonances.items(), key=lambda x: x[1])]
+
+        # Try to determine the Hamiltonian dimension by probing the provided `lh`.
+        Hdim = None
+        try:
+            # `lh` may be a time-dependent list like [H_func] or a callable, or a Qobj
+            if isinstance(lh, (list, tuple)):
+                h0 = lh[0](tlist[0]) if callable(lh[0]) else lh[0]
+            elif callable(lh):
+                h0 = lh(tlist[0])
+            else:
+                h0 = lh
+
+            # Qobj or ndarray: get first dimension
+            Hdim = h0.shape[0] if hasattr(h0, 'shape') else None
+        except Exception:
+            Hdim = None
+
+        # If the Hamiltonian lives in the reduced resonant subspace (Hdim == number of resonant states)
+        # then use basis vectors of that reduced space. Otherwise fall back to full eigenstates.
+        if Hdim is not None and Hdim == len(state_indices):
+            resonant_states = [basis(Hdim, idx) for idx in range(Hdim)]
+        else:
+            resonant_states = [s.E_states[k] for k in state_indices]
+
+    if j >= len(resonant_states):
+        raise ValueError(f"Column index j={j} out of range.")
+
+    result = mesolve(lh, resonant_states[j], tlist, e_ops=[], options=options)
+
+    return np.array([
+        [state.overlap(psi_t) for psi_t in result.states]
+        for state in resonant_states
+    ])
