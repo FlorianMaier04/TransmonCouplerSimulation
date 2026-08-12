@@ -29,7 +29,7 @@ class Simulation:
         self.state_e = 1*(dim_c*dim_q2)+1*(dim_q2)+1 # |111>
         self.order = 3
         self.resonances = {self.state_a: 0, self.state_b: 1, self.state_c: 2}  # E_state_a - wd = E_state_b
-        self.sd = len(self.resonances)
+        self.d_res = len(self.resonances)
         # Convert frequencies and couplings to rad/ns frequencies are given in GHz
         self.w1_num = w1 * 2 * np.pi
         self.alpha1_num = alpha1 * 2 * np.pi
@@ -42,6 +42,9 @@ class Simulation:
         self.g12_num = g12 * 2 * np.pi
         self._setup_operators()
         self._setup_hamiltonian()
+        self.U_ideal = [[0,1j,0],[1j,0,0],[0,0,1]]
+        # self.U_ideal = np.array([[0, 1j], [1j, 0]], dtype=complex)
+
 
     def _setup_operators(self):
         self.a_q1 = tensor(destroy(self.dim_q1), qeye(self.dim_c), qeye(self.dim_q2))
@@ -108,7 +111,7 @@ class Simulation:
         return element
 
     def heff(self, wd, amp, dwd=0, da=0, t=0):
-        heff = np.zeros((self.sd, self.sd), dtype=complex)
+        heff = np.zeros((self.d_res, self.d_res), dtype=complex)
         states = [*self.resonances.keys()]
         for idx_a, state_a in enumerate(states):
             for idx_b, state_b in enumerate(states):
@@ -120,7 +123,7 @@ def compute_cos_params(s, tg, use_c=False):
     amp_min, amp_max = 0.001, 1.5*2*np.pi
     f = lambda A: np.abs(s.heff_element(s.state_a, s.state_b, s.find_resonance(A, use_c = use_c), A)) - epsilonx # epsilonx * 1 = Omega_ab
     sol = root_scalar(f, bracket=[amp_min, amp_max])
-    return sol.root, s.find_resonance(sol.root, use_c = use_c)
+    return s.find_resonance(sol.root, use_c = use_c), sol.root
 
 def resonant_subspace_column_evolution(lh, tlist, j, debug=False, s=None):
     options = {"progress_bar": "tqdm", "nsteps":100000} if debug else None
@@ -129,7 +132,7 @@ def resonant_subspace_column_evolution(lh, tlist, j, debug=False, s=None):
         resonant_states = [basis(3, i) for i in range(3)]
     else:
         # Order resonant state indices by their assigned order/value
-        state_indices = [k for k, _ in sorted(s.resonances.items(), key=lambda x: x[1])]
+        state_indices = list(s.resonances.keys())
 
         # Try to determine the Hamiltonian dimension by probing the provided `lh`.
         Hdim = None
