@@ -22,11 +22,21 @@ class Simulation:
         """
         self.dim_q1, self.dim_q2, self.dim_c = dim_q1, dim_q2, dim_c
         self.D = self.dim_q1 * self.dim_c * self.dim_q2
-        self.state_b = dim_q2 * dim_c  # state |100>
-        self.state_a = 1  # state |001>
-        self.state_c = dim_q2  # state |010>
-        self.state_d = 2 # state |002> # this state is at same energy as state_a at the resonant frequency
-        self.state_e = 1*(dim_c*dim_q2)+1*(dim_q2)+1 # |111>
+        def get_index_for_state(n_q1, n_c, n_q2):
+            """Gibt die Energie E für den Zustand |n_q1, n_c, n_q2> aus E_array zurück."""
+            return n_q1 * (dim_c * dim_q2) + n_c * dim_q2 + n_q2
+        self.state_b = get_index_for_state(1,0,0)  # state |100>
+        self.state_a = get_index_for_state(0,0,1)  # state |001>
+        self.state_c =  get_index_for_state(0,1,0)  # state |010>
+        self.state_000 =  get_index_for_state(0,0,0) # state |002> # this state is at same energy as state_a at the resonant frequency
+        self.state_101 =  get_index_for_state(1,0,1)
+        self.U_ideal = np.array([
+            [1,  0,  0, 0],
+            [0,  0, 1j, 0],
+            [0, 1j,  0, 0],
+            [0,  0,  0, 1]
+        ], dtype=complex)
+        self.comp_indices = [self.state_000, self.state_a, self.state_b, self.state_101]
         self.order = 3
         self.resonances = {self.state_a: 0, self.state_b: 1, self.state_c: 2}  # E_state_a - wd = E_state_b
         self.d_res = len(self.resonances)
@@ -42,8 +52,6 @@ class Simulation:
         self.g12_num = g12 * 2 * np.pi
         self._setup_operators()
         self._setup_hamiltonian()
-        self.U_ideal = [[0,1j,0],[1j,0,0],[0,0,1]]
-        # self.U_ideal = np.array([[0, 1j], [1j, 0]], dtype=complex)
 
 
     def _setup_operators(self):
@@ -125,7 +133,7 @@ def compute_cos_params(s, tg, use_c=False):
     sol = root_scalar(f, bracket=[amp_min, amp_max])
     return s.find_resonance(sol.root, use_c = use_c), sol.root
 
-def resonant_subspace_column_evolution(lh, tlist, j, debug=False, s=None):
+def column_evolution(lh, tlist, j, debug=False, s=None):
     options = {"progress_bar": "tqdm", "nsteps":100000} if debug else None
 
     if s is None:
