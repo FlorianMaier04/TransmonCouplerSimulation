@@ -140,7 +140,6 @@ def correct_phase_zz(U):
     gamma_e_prime = 2*theta-np.pi-gamma_0
     delta_gamma_e = gamma_e_prime - gamma_e
     phases = np.array([0, 0,0,delta_gamma_e], dtype=complex)
-    print("phases: ", np.array([theta, gamma_0, delta_gamma_e])*(2*np.pi)**-1)
     D = np.diag(np.exp(1j*phases))
     return D @ U # apply virtual z and global shift
 
@@ -176,7 +175,8 @@ def infid_population(U):
             [0, 0,        0,        1]], dtype=complex, copy=True)
     else: U_comp = np.array(U, dtype=complex, copy=True)
     U_comp = correct_phase_virtual(U_comp)
-    return 1 - 0.5 * (np.abs(U_comp[2, 1]) ** 2 + np.abs(U_comp[1, 2]) ** 2)
+    return 1 - 1/4 * (np.abs(U_comp[2, 1]) ** 2 + np.abs(U_comp[1, 2]) ** 2 
+                      + np.abs(U_comp[0, 0]) ** 2 + np.abs(U_comp[3, 3]) ** 2)
 
 # ------------------------------------------------------------------
 # 3. Allgemeine Parameteroptimierung
@@ -225,7 +225,7 @@ def optimize_pulse_parameters(H_func, M_func, M_inv_0_func, param_ranges, s, tg,
 
     return best_params, float(result.fun)
 
-def optimize_iswap_at_gate_time(tg_target, s, param_ranges, H_func, M_func, M_inv_0_func, correct_zz=False, pts_per_ns=40.0, N_t=300, popsize=8, maxiter=50, tol=1e-8, polish=True, verbose=False):
+def optimize_iswap_at_gate_time(tg_target, s, param_ranges, H_func, M_func, M_inv_0_func, pts_per_ns=40.0, N_t=300, popsize=8, maxiter=50, tol=1e-8, polish=True, verbose=False):
     """Optimiert den Populationstransfer und korrigiert anschließend per Virtual Z oder Gatezeit."""
     cos_wd, cos_amp = compute_cos_params(s,tg_target)
     best_params, infid_floq_pop = optimize_pulse_parameters(H_func, M_func, M_inv_0_func, param_ranges, s, tg_target, N_t=N_t, verbose=verbose, popsize=popsize, maxiter=maxiter, tol=tol, polish=polish, x0=np.zeros(len(param_ranges.keys())))
@@ -243,15 +243,15 @@ def optimize_iswap_at_gate_time(tg_target, s, param_ranges, H_func, M_func, M_in
         amplitudes = np.array([[state.overlap(psi_t) for psi_t in result.states] for state in s.E_states[s.comp_indices]])
         U_direct[:, j] = amplitudes[:, -1]
     infid_direct_pop = infid_population(U_direct)
-    infid_direct_proc = infid_process_direct(U_direct,s, correct_zz=correct_zz)
+    infid_direct_proc = infid_process_direct(U_direct,s, correct_zz=False)
+    infid_direct_proc_zz_corrected = infid_process_direct(U_direct,s, correct_zz=True)
     print(
         f"tg_final: {tg_final:.4f} ns | "
         f"infid_floq_pop: {infid_floq_pop:.4e} | "
         f"infid_floq_proc: {infid_floq_proc:.4e} | "
         f"infid_direct_pop: {infid_direct_pop:.4e} | "
-        f"infid_direct_proc: {infid_direct_proc:.4e}"
-    )
-    return {"infid_direct_pop":infid_direct_pop, "infid_direct_proc":infid_direct_proc, "infid_floq_proc":infid_floq_proc, "infid_floq_pop":infid_floq_pop, "tg_final":tg_final}
+        f"infid_direct_proc: {infid_direct_proc:.4e}")
+    return {"infid_direct_pop":infid_direct_pop, "infid_direct_proc":infid_direct_proc, "infid_floq_proc":infid_floq_proc, "infid_floq_pop":infid_floq_pop, "tg_final":tg_final, " infid_direct_proc_zzcorrected": infid_direct_proc_zz_corrected}
 
 def refine_gate_time_phase_aligned(p_vals, tg_target, wd, s, H_func, M_func, M_inv_0_func, correct_zz = False, steps_per_ns=30.0, grid_points=401):
     """Sucht in [tg_target - 2*pi/|wd|, tg_target] die beste phasenangepasste Process-Fidelity."""

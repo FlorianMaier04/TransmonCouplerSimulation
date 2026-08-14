@@ -6,8 +6,60 @@ from helper_function import *
 from scipy.optimize import fsolve
 from scipy.optimize import root_scalar
 
+import copy
+import numpy as np
+import sympy as sy
+
+def _sym_complex(z):
+    z = complex(z)
+    return sy.Float(z.real) + sy.I * sy.Float(z.imag)
+
+
+def make_symbolic_bias_simulation(s_ref, f_ref=0.0, gap_tol=1e-10):
+    """
+    Erzeugt symbolische Näherungen E_n(f) bis O(df^2) und V_nm(f) bis O(df)
+    um den numerischen Referenzbias f_ref. f_c_dc wird in GHz eingesetzt.
+    """
+    f_c_dc = sy.Symbol("f_c_dc", real=True)
+    delta = 2 * sy.pi * (f_c_dc - f_ref)
+
+    E0 = np.asarray(s_ref.E_array, dtype=float)
+    V0 = np.asarray(s_ref.V1_dressed_array, dtype=complex)
+    D = len(E0)
+
+    # E_n(delta) = E_n + delta V_nn + delta^2 sum_m |V_mn|^2 / (E_n - E_m)
+    E_sym = np.empty(D, dtype=object)
+
+    for n in range(D):
+        second_order = sum(abs(V0[m, n])**2 / (E0[n] - E0[m]) for m in range(D) if m != n and abs(E0[n] - E0[m]) > gap_tol)
+        E_sym[n] = sy.Float(E0[n]) + delta * _sym_complex(V0[n, n]) + delta**2 * sy.Float(np.real(second_order))
+
+    # Erste Ordnungsänderung von V1 durch die Änderung der dressed basis
+    V_correction = np.zeros((D, D), dtype=complex)
+
+    for n in range(D):
+        for m in range(D):
+            for k in range(D):
+                if k != n and abs(E0[n] - E0[k]) > gap_tol:
+                    V_correction[n, m] += V0[n, k] * V0[k, m] / (E0[n] - E0[k])
+                if k != m and abs(E0[m] - E0[k]) > gap_tol:
+                    V_correction[n, m] += V0[n, k] * V0[k, m] / (E0[m] - E0[k])
+
+    V_correction = 0.5 * (V_correction + V_correction.conj().T)
+    V_sym = np.empty((D, D), dtype=object)
+
+    for n in range(D):
+        for m in range(D):
+            V_sym[n, m] = _sym_complex(V0[n, m]) + delta * _sym_complex(V_correction[n, m])
+
+    s_sym = copy.copy(s_ref)
+    s_sym.E_array = E_sym
+    s_sym.V1_dressed_array = V_sym
+
+    return s_sym, f_c_dc
+
 class Simulation:
-    def __init__(self, dim_q1=3, dim_q2=3, dim_c=3,
+    def __init__(self, f_c_dc=0, dim_q1=3, dim_q2=3, dim_c=3,
                  w1=3.83, w2=3.11, wc=4.29,
                  alpha1=-0.205, alpha2=-0.216, alphac=-0.161,
                  g1c=0.115, g2c=0.110, g12=0.015):
@@ -45,7 +97,7 @@ class Simulation:
         self.alpha1_num = alpha1 * 2 * np.pi
         self.w2_num = w2 * 2 * np.pi
         self.alpha2_num = alpha2 * 2 * np.pi
-        self.wc_num = wc * 2 * np.pi
+        self.wc_num = wc * 2 * np.pi + f_c_dc * 2*np.pi
         self.alphac_num = alphac * 2 * np.pi
         self.g1c_num = g1c * 2 * np.pi
         self.g2c_num = g2c * 2 * np.pi
