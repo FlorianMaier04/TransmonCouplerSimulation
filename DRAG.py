@@ -33,6 +33,20 @@ def _sigma_op(i, j, d, kind='x', symbolic=False):
         return op
     return sigma_x_ij(i, j, d) if kind == 'x' else sigma_y_ij(i, j, d)
 
+def gauss(tsym, A, tg, sigma, symbolic):
+    xp = sp if symbolic else np
+    B_ratio = xp.exp(-(tg**2) / (8 * sigma**2))
+    def pulse_shape(t):
+      return A * (xp.exp(-((t - tg / 2) ** 2) / (2 * sigma**2)) - B_ratio)
+    def pulse_derivative(t):
+        return (
+            -A
+            * (t - tg / 2)
+            * xp.exp(-((t - tg / 2) ** 2) / (2 * sigma**2))
+            / sigma**2)
+    return pulse_shape(tsym), pulse_derivative(tsym)
+
+
 def pulse_functions(
     tg, Delta, rrr, sigma_r=0.3, pulse='gauss', symbolic=None, order=5
 ):

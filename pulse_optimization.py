@@ -182,7 +182,7 @@ def infid_population(U):
 # 3. Allgemeine Parameteroptimierung
 # ------------------------------------------------------------------
 
-def optimize_pulse_parameters(H_func, M_func, M_inv_0_func, param_ranges, s, tg, N_t=200, verbose=False, popsize=15, maxiter=80, tol=1e-5, polish=True, mutation=(0.5, 1.0), recombination=0.7, seed=1, workers=1, x0=None):
+def optimize_pulse_parameters(H_func, M_func, M_inv_0_func, param_ranges, s, tg, N_t=200, verbose=False, popsize=17, maxiter=80, tol=1e-8, polish=True, mutation=(0.5, 1.0), recombination=0.7, seed=1, workers=1, x0=np.array([0,1])):
     tlist = np.linspace(0.0, tg, N_t)
     dt = tlist[1] - tlist[0]
     t_mids = tlist[:-1] + dt / 2.0
@@ -225,14 +225,14 @@ def optimize_pulse_parameters(H_func, M_func, M_inv_0_func, param_ranges, s, tg,
 
     return best_params, float(result.fun)
 
-def optimize_iswap_at_gate_time(tg_target, s, param_ranges, H_func, M_func, M_inv_0_func, pts_per_ns=40.0, N_t=300, popsize=8, maxiter=50, tol=1e-8, polish=True, verbose=False):
+def optimize_iswap_at_gate_time_cos(tg_target, s, param_ranges, H_func, M_func, M_inv_0_func, pts_per_ns=40.0, N_t=300, popsize=8, maxiter=50, tol=1e-8, polish=True, verbose=False):
     """Optimiert den Populationstransfer und korrigiert anschließend per Virtual Z oder Gatezeit."""
     cos_wd, cos_amp = compute_cos_params(s,tg_target)
-    best_params, infid_floq_pop = optimize_pulse_parameters(H_func, M_func, M_inv_0_func, param_ranges, s, tg_target, N_t=N_t, verbose=verbose, popsize=popsize, maxiter=maxiter, tol=tol, polish=polish, x0=np.zeros(len(param_ranges.keys())))
+    best_params, infid_floq_pop = optimize_pulse_parameters(H_func, M_func, M_inv_0_func, param_ranges, s, tg_target, N_t=N_t, verbose=verbose, popsize=popsize, maxiter=maxiter, tol=tol, polish=polish, x0=None)
 
     p_vals = tuple(best_params[name] for name in list(param_ranges.keys()))
     wd = cos_wd + best_params["wd_offset"]
-    amp = cos_amp + best_params["amp_offset"]
+    amp = cos_amp * best_params["amp_scale"]
 
     tg_final, infid_floq_proc = refine_gate_time_phase_aligned(p_vals, tg_target, wd, s, H_func, M_func, M_inv_0_func)
     q_sig = lambda t, args=None: amp * np.cos(wd * t)
@@ -279,24 +279,3 @@ def refine_gate_time_phase_aligned(p_vals, tg_target, wd, s, H_func, M_func, M_i
         tg_opt = float(result.x)
 
     return tg_opt, objective(tg_opt)
-
-def compute_logical_error_decomposition(U, U_ideal, logical_indices=(0, 1)):
-    """Zerlegt die logische Process-Infidelity additiv in Leakage und kohärenten Fehler."""
-
-    logical_indices = list(logical_indices)
-
-    K = np.asarray(U, dtype=complex)[np.ix_(logical_indices, logical_indices)]
-    U_target = np.asarray(U_ideal, dtype=complex)[np.ix_(logical_indices, logical_indices)]
-
-    d = len(logical_indices)
-
-    survival = float(np.real(np.trace(K.conj().T @ K) / d))
-
-    trace_val = np.trace(U_target.conj().T @ K)
-    logical_fidelity = float(np.real(np.abs(trace_val) ** 2 / d**2))
-
-    logical_infidelity = max(0.0, 1.0 - logical_fidelity)
-    leakage_infidelity = max(0.0, 1.0 - survival)
-    coherent_infidelity = max(0.0, survival - logical_fidelity)
-
-    return logical_infidelity, leakage_infidelity, coherent_infidelity

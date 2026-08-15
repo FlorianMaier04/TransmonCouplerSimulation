@@ -34,7 +34,7 @@ def _harm_list(V_posHarm):
     V = np.asarray(V_posHarm)
     return [V] if V.ndim == 2 else list(V)
 
-def _V_from_Vtilde(V_posHarm, A=None, analytics=False):
+def V_from_Vtilde(V_posHarm, A=None, analytics=False):
     Vtilde = _harm_list(V_posHarm)
     nH = len(Vtilde)
     if A is None:
@@ -413,7 +413,7 @@ def Heff_Floquet_total_matrix_summed(rH, wd, A, resonances, E, V_posHarm,
             verbose=verbose
         )
 
-    V_full = _V_from_Vtilde(V_posHarm, A=A, analytics=analytics)
+    V_full = V_from_Vtilde(V_posHarm, A=A, analytics=analytics)
 
     # Indizes-Paare für Matrix-Schleife generieren
     pairs = [(i, bi, j, aj) for i, bi in enumerate(ind_inv) for j, aj in enumerate(ind_inv)]
