@@ -46,6 +46,16 @@ def gauss(tsym, A, tg, sigma, symbolic):
             / sigma**2)
     return pulse_shape(tsym), pulse_derivative(tsym)
 
+def tanh(tsym, A, tg, sigma, symbolic):
+    xp = sp if symbolic else np
+    def pulse_shape(t):
+        return A * xp.tanh(t / sigma) * xp.tanh((tg - t) / sigma)
+
+    def pulse_derivative(t):
+        x, y = t / sigma, (tg - t) / sigma
+        return A / sigma * (xp.tanh(y) / xp.cosh(x)**2 - xp.tanh(x) / xp.cosh(y)**2)
+
+    return pulse_shape(tsym), pulse_derivative(tsym)
 
 def pulse_functions(
     tg, Delta, rrr, sigma_r=0.3, pulse='gauss', symbolic=None, order=5
