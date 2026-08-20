@@ -30,7 +30,8 @@ def prepare_floquet_functions(pulse_shape_builder, p_names, s, rH, rW, include_g
 
     try:
         W = W_Floquet_elements_fast(rW, wd_expr, s.resonances, s.E_array, s.V1_dressed_array, A=A_expr, V0=None, analytics=True, verbose=verbose)
-        Heff = Heff_Floquet_total_matrix_summed(rH, wd_expr, A_expr, s.resonances, s.E_array, s.V1_dressed_array, V0=None, ref_state=None, dwd=wd_expr.diff(t_sym), dA=A_expr.diff(t_sym), t=t_sym, analytics=True, rW=rW, include_geometric=include_geometric, include_micromotion=include_micromotion, include_g_correction=include_g_correction, W=W, verbose=verbose)
+        use_FAPT = include_g_correction or include_micromotion or include_geometric
+        Heff = Heff_Floquet_total_matrix_summed(rH, wd_expr, A_expr, s.resonances, s.E_array, s.V1_dressed_array, V0=None, ref_state=None, dwd=wd_expr.diff(t_sym) if use_FAPT else None, dA=A_expr.diff(t_sym) if use_FAPT else None, t=t_sym, analytics=True, rW=rW, include_geometric=include_geometric, include_micromotion=include_micromotion, include_g_correction=include_g_correction, W=W, verbose=verbose)
 
     finally:
         np.exp = orig_np_exp

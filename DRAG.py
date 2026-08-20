@@ -3,7 +3,216 @@ from qutip import Qobj, basis
 import numpy as np
 from scipy.integrate import quad
 from scipy.optimize import root_scalar
+from scipy.integrate import solve_ivp
+from scipy.interpolate import CubicSpline
 
+def test_drag_hamiltonian(
+    tlist,
+    H11_values,
+    H01_values,
+    Delta_values,
+    lambda_values,
+    lambda_convention="H01_over_H12",
+    rtol=1e-10,
+    atol=1e-12,
+    plot=True,
+):
+    """
+    Propagiert das zeitabhängige DRAG-Target-Hamiltonian
+
+        H = [[0,       H01,          0],
+             [H01*,    H11,        H12],
+             [0,       H12*, Delta + 2 H11]]
+
+    mit
+        Delta(t) = H22(t) - 2 H11(t).
+
+    Standardmäßig gilt
+        lambda(t) = H01(t) / H12(t).
+
+    Dadurch folgt
+        H12(t) = H01(t) / lambda(t).
+    """
+
+    tlist = np.asarray(tlist, dtype=float)
+    H11_values = np.asarray(H11_values, dtype=float)
+    H01_values = np.asarray(H01_values, dtype=complex)
+    Delta_values = np.broadcast_to(
+        np.asarray(Delta_values, dtype=float),
+        tlist.shape,
+    )
+    lambda_values = np.broadcast_to(
+        np.asarray(lambda_values, dtype=complex),
+        tlist.shape,
+    )
+
+    arrays = (
+        H11_values,
+        H01_values,
+        Delta_values,
+        lambda_values,
+    )
+
+    if any(values.shape != tlist.shape for values in arrays):
+        raise ValueError(
+            "All time-dependent quantities must have the same "
+            "shape as tlist."
+        )
+
+    if np.any(np.diff(tlist) <= 0):
+        raise ValueError("tlist must be strictly increasing.")
+
+    H11_spline = CubicSpline(tlist, H11_values)
+    H01_real_spline = CubicSpline(tlist, H01_values.real)
+    H01_imag_spline = CubicSpline(tlist, H01_values.imag)
+    Delta_spline = CubicSpline(tlist, Delta_values)
+    lambda_real_spline = CubicSpline(tlist, lambda_values.real)
+    lambda_imag_spline = CubicSpline(tlist, lambda_values.imag)
+
+    def drag_matrix(t):
+        H11 = float(H11_spline(t))
+        H01 = (
+            float(H01_real_spline(t))
+            + 1j * float(H01_imag_spline(t))
+        )
+        Delta_t = float(Delta_spline(t))
+        lambda_t = (
+            float(lambda_real_spline(t))
+            + 1j * float(lambda_imag_spline(t))
+        )
+
+        if lambda_convention == "H01_over_H12":
+            if abs(lambda_t) < 1e-12:
+                raise ValueError(
+                    f"lambda(t) is too small at t={t:.8g}."
+                )
+            H12 = H01 / lambda_t
+
+        elif lambda_convention == "H12_over_H01":
+            H12 = lambda_t * H01
+
+        else:
+            raise ValueError(
+                "lambda_convention must be "
+                "'H01_over_H12' or 'H12_over_H01'."
+            )
+
+        H22 = Delta_t + 2.0 * H11
+
+        return np.array(
+            [
+                [0.0,             H01,              0.0],
+                [np.conj(H01),    H11,              H12],
+                [0.0,             np.conj(H12),     H22],
+            ],
+            dtype=complex,
+        )
+
+    def rhs(t, U_flat):
+        U = U_flat.reshape(3, 3)
+        return (-1j * drag_matrix(t) @ U).reshape(-1)
+
+    solution = solve_ivp(
+        rhs,
+        (tlist[0], tlist[-1]),
+        np.eye(3, dtype=complex).reshape(-1),
+        t_eval=tlist,
+        method="DOP853",
+        rtol=rtol,
+        atol=atol,
+    )
+
+    if not solution.success:
+        raise RuntimeError(solution.message)
+
+    U_values = solution.y.T.reshape(-1, 3, 3)
+    U_final = U_values[-1]
+
+    transfer_a_to_b = abs(U_final[1, 0])**2
+    transfer_b_to_a = abs(U_final[0, 1])**2
+
+    population_fidelity = 0.5 * (
+        transfer_a_to_b + transfer_b_to_a
+    )
+    population_infidelity = 1.0 - population_fidelity
+
+    leakage_from_a = abs(U_final[2, 0])**2
+    leakage_from_b = abs(U_final[2, 1])**2
+    mean_final_leakage = 0.5 * (
+        leakage_from_a + leakage_from_b
+    )
+
+    unitarity_error = np.linalg.norm(
+        U_final.conj().T @ U_final - np.eye(3)
+    )
+
+    populations_from_a = np.abs(U_values[:, :, 0])**2
+    populations_from_b = np.abs(U_values[:, :, 1])**2
+
+    if plot:
+        import matplotlib.pyplot as plt
+
+        fig, axes = plt.subplots(
+            1,
+            2,
+            figsize=(7.0, 3.0),
+            sharey=True,
+            dpi=110,
+        )
+
+        labels = (
+            r"$|a\rangle$",
+            r"$|b\rangle$",
+            r"$|c\rangle$",
+        )
+        colors = ("#1f77b4", "#d62728", "#2ca02c")
+
+        for index, (label, color) in enumerate(
+            zip(labels, colors)
+        ):
+            axes[0].plot(
+                tlist / tlist[-1],
+                populations_from_a[:, index],
+                color=color,
+                label=label,
+            )
+            axes[1].plot(
+                tlist / tlist[-1],
+                populations_from_b[:, index],
+                color=color,
+                label=label,
+            )
+
+        axes[0].set_title(r"Initial state $|a\rangle$")
+        axes[1].set_title(r"Initial state $|b\rangle$")
+
+        for axis in axes:
+            axis.set_xlabel(r"$t/t_g$")
+            axis.set_xlim(0.0, 1.0)
+            axis.set_ylim(-0.02, 1.02)
+            axis.grid(True, linestyle=":", alpha=0.6)
+
+        axes[0].set_ylabel("Population")
+        axes[1].legend(frameon=False)
+
+        fig.suptitle(
+            "Dynamics of the DRAG Target Hamiltonian",
+            fontweight="bold",
+        )
+        fig.tight_layout()
+
+    return {
+        "U_final": U_final,
+        "U_values": U_values,
+        "population_fidelity": population_fidelity,
+        "population_infidelity": population_infidelity,
+        "mean_final_leakage": mean_final_leakage,
+        "transfer_a_to_b": transfer_a_to_b,
+        "transfer_b_to_a": transfer_b_to_a,
+        "unitarity_error": unitarity_error,
+        "populations_from_a": populations_from_a,
+        "populations_from_b": populations_from_b,
+    }
 
 def sigma_x_ij(i, j, d):
     ei = basis(d, i)
@@ -82,7 +291,7 @@ def pulse_functions(
       )
 
   elif pulse == 'tanh':
-
+    print("tanh")
     def pulse_shape(t, A):
       return A * xp.tanh(t / sigma) * xp.tanh((tg - t) / sigma)
 
