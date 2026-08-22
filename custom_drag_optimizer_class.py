@@ -37,7 +37,7 @@ class CustomDRAGConfig:
     max_nfev: int = 150
     dwd_backsteps: int = 1
     dA_backsteps: int = 5
-    dDelta_backsteps: int = 5
+    dDelta_lambda_backsteps: int = 5
     c02_weight: float = 1.0
     regularization_weight: float = 0.0
 
@@ -170,24 +170,28 @@ class CustomDRAGOptimizer:
                 return value
         return self.lambda_values[index - 1] if index else complex(self.c.rrr)
 
-    def drag_target(self, index, Delta_eff, dDelta_eff, lambda_eff):
+    def drag_target(self, index, Delta_eff, dDelta_eff, lambda_eff, dlambda_eff):
         ep, ep_dot = self.ep0[index], self.ep0_dot[index]
         Delta = self.safe_delta(Delta_eff)
-        lam2 = lambda_eff**2
+        lam, lam2 = lambda_eff, lambda_eff**2
 
         eps_x = ep
-        eps_y = -ep_dot / Delta + ep * dDelta_eff / Delta**2
-        delta1 = (lam2 - 4.0) * ep**2 / (4.0 * Delta)
+        eps_x += (lam2 - 4.0) * ep**3 / (8.0 * Delta**2)
+        eps_x -= (13.0 * lam2**2 - 76.0 * lam2 + 112.0) * ep**5 / (128.0 * Delta**4)
 
-        if self.c.drag_order == 5:
-            eps_x += (lam2 - 4.0) * ep**3 / (8.0 * Delta**2)
-            eps_x -= (13.0 * lam2**2 - 76.0 * lam2 + 112.0) * ep**5 / (128.0 * Delta**4)
-            eps_y += 33.0 * (lam2 - 2.0) * ep**2 * ep_dot / (24.0 * Delta**3)
-            delta1 -= (lam2**2 - 7.0 * lam2 + 12.0) * ep**4 / (16.0 * Delta**3)
+        eps_y = -ep_dot / Delta + ep * dDelta_eff / Delta**2
+        eps_y += 33.0 * (lam2 - 2.0) * ep**2 * ep_dot / (24.0 * Delta**3)
+        eps_y += (
+            6.0 * lam * dlambda_eff
+            - 11.0 * (lam2 - 2.0) * dDelta_eff
+        ) * ep**3 / (8.0 * Delta**4)
+
+        delta1 = (lam2 - 4.0) * ep**2 / (4.0 * Delta)
+        delta1 -= (lam2**2 - 7.0 * lam2 + 12.0) * ep**4 / (16.0 * Delta**3)
 
         H01 = 0.5 * (eps_x - 1j * eps_y)
         return np.array([delta1.real, H01.real, H01.imag])
-
+    
     def backward_control_derivatives(self, controls, index):
         result = np.zeros(self.n_controls)
         if not self.c.correct or index == 0:
@@ -203,9 +207,13 @@ class CustomDRAGOptimizer:
     def backward_delta_derivative(self, value, index):
         if index == 0:
             return 0.0
-        j = max(0, index - self.c.dDelta_backsteps)
+        j = max(0, index - self.c.dDelta_lambda_backsteps)
         return (value - self.Delta_values[j]) / (self.tlist[index] - self.tlist[j])
-
+    def backward_lambda_derivative(self, value, index):
+        if index == 0:
+            return 0.0
+        j = max(0, index - self.c.dDelta_lambda_backsteps)
+        return (value - self.lambda_values[j]) / (self.tlist[index] - self.tlist[j])
     # ------------------------------------------------------------------
     # Pointwise pulse-shape optimization
     # ------------------------------------------------------------------
@@ -243,7 +251,8 @@ class CustomDRAGOptimizer:
                 Delta_eff = float((H[2, 2] - 2.0 * H[1, 1]).real)
                 dDelta_eff = self.backward_delta_derivative(Delta_eff, index)
                 lambda_eff = self.current_lambda(H, index)
-                target = self.drag_target(index, Delta_eff, dDelta_eff, lambda_eff)
+                dLambda_eff = self.backward_lambda_derivative(lambda_eff, index)
+                target = self.drag_target(index, Delta_eff, dDelta_eff, lambda_eff, dLambda_eff)
                 model = np.array([H[1, 1].real, H[0, 1].real, H[0, 1].imag])
                 core = (model - target) / self.core_scales
                 c02 = c.c02_weight * np.array([H[0, 2].real, H[0, 2].imag]) / self.H02_scale
