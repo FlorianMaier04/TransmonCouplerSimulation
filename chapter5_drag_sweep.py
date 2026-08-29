@@ -65,8 +65,10 @@ def inspect_sweep_point(path, sigma_r, tg):
 
 @dataclass
 class SweepConfig:
-    tg_values: np.ndarray = field(default_factory=lambda: np.array([30,40,50,60,70,80,90,100]))
-    sigma_values: np.ndarray = field(default_factory=lambda: np.array([0.1]))
+    tg_values: np.ndarray = field(default_factory=lambda: np.array([20,22.5,25,27.5,30,
+                                                                    40,45,50,55,60,65,
+                                                                    70,75,80,85,90,95,100]))
+    sigma_values: np.ndarray = field(default_factory=lambda: np.array([0.01,0.05,0.1,0.5,0.8]))
     output_dir: Path = Path("operational_res/chapter5_data")
     data_name: str | None = None
     figure_name: str | None = None
@@ -78,7 +80,7 @@ class SweepConfig:
     drag_order: int = 5
     rH: int = 2
     rW: int = 1
-    use_second_harmonic: bool = False
+    use_second_harmonic: bool = True
     N_t: int = 200
 
     full_rH: int = 2
